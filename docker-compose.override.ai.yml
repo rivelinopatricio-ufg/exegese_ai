@@ -1,0 +1,17 @@
+# Optional file for local Ollama service execution
+version: "3.8"
+services:
+  ollama:
+    container_name: exegese_ollama
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+      - ./ollama_init.sh:/ollama_init.sh
+    entrypoint: ["/usr/bin/bash", "/ollama_init.sh"]
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+    driver: local

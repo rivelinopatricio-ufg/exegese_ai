@@ -1,16 +1,33 @@
-# Compiled class file
-*.class
+# Maven & Build output
+/target/
+/bin/
+/dist/
+/build/
+/temp/
 
-# Log file
+# Application configuration & Environment secrets
+.env
+app_config
+
+# IDE & Tooling
+/.settings/
+.vscode/
+.idea/
+*.iws
+*.iml
+*.ipr
+*.lnk
+
+# Local data & Docker persistent volumes
+/pgdata/
+/ollama_data/
 *.log
 
-# BlueJ files
-*.ctxt
+# Java crash logs
+hs_err_pid*
+replay_pid*
 
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
-
-# Package Files #
+# Package Files
 *.jar
 *.war
 *.nar
@@ -19,6 +36,10 @@
 *.tar.gz
 *.rar
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
-hs_err_pid*
-replay_pid*
+# Google Antigravity & Agent Tooling
+.agents
+GEMINI.md
+/CLAUDE.md
+/.claude/
+/.claude-code-history/
+/.playwright-mcp/
