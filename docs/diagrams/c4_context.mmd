@@ -1,0 +1,29 @@
+﻿C4Context
+    title "Diagrama de Contexto - Plataforma Exegese AI"
+
+    Person(usuario, "Usuário / Pesquisador", "Consulta documentos em linguagem natural filtrando por assuntos de interesse.")
+    Person(admin, "Administrador", "Gerencia permissões de usuários, acervo de documentos e chaveamento de modelos de IA.")
+
+    System(exegese, "Exegese AI", "Plataforma RAG especialista com fundamentação documental estrita e tolerância zero a alucinações.")
+
+    System_Ext(google_auth, "Google Identity (OAuth2 / OIDC)", "Autenticação federada de usuários e administradores.")
+    System_Ext(doc_sources, "Fontes Documentais", "Manuais IRPF, Legislações, Regulamentos, Contratos e Editais.")
+
+    System_Ext(gemini, "Google Gemini API", "Geração e embeddings (Flash / Pro / text-embedding).")
+    System_Ext(claude, "Anthropic Claude API", "Modelos Claude 3.5 / 3.7 Sonnet para interpretação avançada.")
+    System_Ext(openai, "OpenAI ChatGPT API", "Modelos GPT-4o / GPT-4o-mini e text-embedding-3.")
+    System_Ext(nemotron, "NVIDIA Nemotron API (NIM)", "Modelos Llama-3.1-Nemotron otimizados.")
+    System_Ext(deepseek, "DeepSeek AI API", "Modelos DeepSeek-V3 e DeepSeek-R1 via endpoint compatível.")
+    System_Ext(ollama, "Processamento Local (Ollama)", "Inferência local offline em infraestrutura própria sem custo de token.")
+
+    Rel(usuario, exegese, "Pesquisa em linguagem natural filtrando assuntos e recebe streaming com citações", "HTTPS / SSE")
+    Rel(admin, exegese, "Atribui permissões, gerencia documentos/assuntos e seleciona modelos ativos", "HTTPS")
+    Rel(exegese, google_auth, "Autentica identidade via fluxo OIDC Authorization Code", "HTTPS")
+    Rel(exegese, doc_sources, "Ingere PDFs e arquivos estruturados", "Filesystem / Upload")
+
+    Rel(exegese, gemini, "Embeddings e inferência", "HTTPS / REST")
+    Rel(exegese, claude, "Inferência de texto", "HTTPS / REST")
+    Rel(exegese, openai, "Embeddings e inferência", "HTTPS / REST")
+    Rel(exegese, nemotron, "Inferência de alta performance", "HTTPS / REST")
+    Rel(exegese, deepseek, "Raciocínio e inferência", "HTTPS / REST")
+    Rel(exegese, ollama, "Embeddings e inferência local on-premise", "HTTP / 11434")

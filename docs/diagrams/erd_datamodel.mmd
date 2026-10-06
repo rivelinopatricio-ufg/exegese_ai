@@ -1,0 +1,101 @@
+﻿erDiagram
+    EXEGESE_USER ||--o{ USER_SUBJECT_PERMISSION : possui
+    EXEGESE_USER {
+        uuid id PK
+        string email UK
+        string name
+        string avatar_url
+        string role
+        boolean active
+        timestamp created_at
+        timestamp last_login_at
+    }
+
+    EXEGESE_SUBJECT ||--o{ USER_SUBJECT_PERMISSION : concedido_a
+    EXEGESE_SUBJECT ||--o{ DOCUMENT_SUBJECT : categoriza
+    EXEGESE_SUBJECT {
+        uuid id PK
+        string code UK
+        string name
+        string description
+        boolean active
+        timestamp created_at
+    }
+
+    USER_SUBJECT_PERMISSION {
+        uuid user_id PK, FK
+        uuid subject_id PK, FK
+        string permission_level
+        timestamp granted_at
+    }
+
+    EXEGESE_DOCUMENT ||--o{ DOCUMENT_SUBJECT : associado_a
+    EXEGESE_DOCUMENT ||--o{ EXEGESE_CHUNK : contem
+    EXEGESE_DOCUMENT {
+        uuid id PK
+        string title
+        string original_file_name
+        string storage_path
+        string file_hash_sha256 UK
+        bigint file_size
+        string file_type
+        int total_pages
+        string segmentation_strategy
+        string status
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    DOCUMENT_SUBJECT {
+        uuid document_id PK, FK
+        uuid subject_id PK, FK
+        timestamp tagged_at
+    }
+
+    EXEGESE_CHUNK {
+        uuid id PK
+        uuid document_id FK
+        string chunk_hash_sha256 UK
+        int sequence_number
+        string title
+        text content
+        jsonb metadata
+        vector embedding_768
+        tsvector tsv_portuguese
+        timestamp created_at
+    }
+
+    AI_MODEL_CONFIG {
+        uuid id PK
+        string provider UK
+        string display_name
+        string model_name
+        string base_url
+        string api_key_encrypted
+        boolean is_active
+        boolean is_default
+        float temperature
+        int max_tokens
+        timestamp updated_at
+    }
+
+    CHAT_SESSION ||--o{ CHAT_MESSAGE : possui
+    CHAT_SESSION {
+        uuid id PK
+        uuid user_id FK
+        string title
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    CHAT_MESSAGE {
+        uuid id PK
+        uuid session_id FK
+        string role
+        text content
+        jsonb applied_subject_ids
+        jsonb citations
+        string model_used
+        int execution_duration_ms
+        timestamp created_at
+    }

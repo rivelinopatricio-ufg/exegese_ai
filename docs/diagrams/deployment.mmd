@@ -1,0 +1,33 @@
+﻿graph TB
+    subgraph HostServer["Servidor Host (Docker Engine / Linux)"]
+        subgraph DockerNetwork["Rede Docker: exegese-net (Bridge)"]
+            subgraph AppContainer["Container: exegese-ai-app"]
+                App["Spring Boot 4.x (Java 25 LTS)<br/>Virtual Threads Habilitadas<br/>Porta Interna: 8080<br/>Healthcheck: /actuator/health"]
+            end
+
+            subgraph DbContainer["Container: exegese-ai-db"]
+                Postgres["PostgreSQL 17.2 + pgvector 0.8.0<br/>Porta Interna: 5432<br/>Base: exegese_ai_db<br/>Healthcheck: pg_isready"]
+            end
+
+            subgraph OllamaContainer["Container: exegese-ai-ollama (Profile local)"]
+                Ollama["Ollama Engine (Local LLM)<br/>Porta Interna: 11434"]
+            end
+        end
+
+        VolDB[("Volume Docker: exegese_pgdata")]
+        VolDocs[("Volume Docker: exegese_docs")]
+        VolOllama[("Volume Docker: exegese_ollama_models")]
+
+        Postgres --- VolDB
+        App --- VolDocs
+        Ollama --- VolOllama
+
+        Port8080["Porta Host: 8080"] --> App
+        Port5432["Porta Host: 5432 (Debug)"] -.-> Postgres
+    end
+
+    CloudGoogle["Google Identity (OAuth2 OIDC)"]
+    CloudLLMs["APIs Externas de LLMs (Gemini, Anthropic, OpenAI, NVIDIA, DeepSeek)"]
+
+    App -->|OAuth2 HTTPS:443| CloudGoogle
+    App -->|REST HTTPS:443| CloudLLMs

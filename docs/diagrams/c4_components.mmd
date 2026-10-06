@@ -1,0 +1,57 @@
+﻿classDiagram
+    direction TB
+
+    class AuthModule {
+        +SecurityConfig
+        +GoogleOAuth2SuccessHandler
+        +CustomOidcUserService
+        +SecurityContextFacade
+    }
+
+    class AdminModule {
+        +UserManagementController
+        +DocumentManagementController
+        +SubjectManagementController
+        +ModelConfigurationController
+        +UserService
+        +ModelProviderRegistryService
+    }
+
+    class QueryModule {
+        +ChatViewController
+        +ChatApiController
+        +RagOrchestrationService
+        +QueryRewritingService
+        +AntiHallucinationGuard
+    }
+
+    class RetrievalModule {
+        +HybridSearchService
+        +SubjectFilteredVectorSearch
+        +ReciprocalRankFusionCalculator
+    }
+
+    class IngestionModule {
+        +DocumentIngestionService
+        +SegmentationStrategyFactory
+        +PdfTextExtractor
+        +ChunkChecksumService
+    }
+
+    class AIProviderModule {
+        +LlmProviderRouter
+        +GeminiModelAdapter
+        +ClaudeModelAdapter
+        +OpenAiModelAdapter
+        +NemotronModelAdapter
+        +DeepSeekModelAdapter
+        +OllamaLocalAdapter
+    }
+
+    AuthModule --> AdminModule : protege rotas
+    AuthModule --> QueryModule : identifica sessao
+    QueryModule --> RetrievalModule : solicita chunks por assunto
+    QueryModule --> AIProviderModule : gera resposta via LLM ativo
+    AdminModule --> AIProviderModule : configura modelo ativo
+    AdminModule --> IngestionModule : comanda ingestao
+    IngestionModule --> RetrievalModule : popula vetores e FTS

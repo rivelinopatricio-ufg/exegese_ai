@@ -1,0 +1,26 @@
+﻿sequenceDiagram
+    autonumber
+    actor Usuario as "Usuário / Navegador"
+    participant App as "Exegese AI Security Filter"
+    participant Google as "Google OAuth2 / OIDC Endpoint"
+    participant DB as "Tabela EXEGESE_USER"
+
+    Usuario->>App: Acessa rota protegida (ex.: / ou /admin)
+    App-->>Usuario: Redireciona para /oauth2/authorization/google
+    Usuario->>Google: Autentica com conta Google e consente escopos (email, profile)
+    Google-->>App: Redireciona para /login/oauth2/code/google com Auth Code
+    App->>Google: Troca Auth Code por ID Token e Access Token
+    Google-->>App: Retorna Claims do Usuário (sub, email, name, picture)
+    
+    App->>DB: Busca usuário por e-mail
+    alt Usuário não existe no banco
+        alt E-mail igual a INITIAL_ADMIN_EMAIL do .env
+            App->>DB: Cria novo usuário com ROLE_ADMIN ativo
+        else Novo usuário comum
+            App->>DB: Cria novo usuário com ROLE_USER ativo
+        end
+    else Usuário já cadastrado
+        App->>DB: Atualiza data de último login e foto
+    end
+
+    App-->>Usuario: Estabelece sessão segura (Set-Cookie: JSESSIONID) e redireciona

@@ -1,0 +1,42 @@
+﻿sequenceDiagram
+    autonumber
+    actor Usuario as "Usuário Autenticado"
+    participant UI as "Interface Web (HTMX / SSE)"
+    participant Controller as "ChatApiController"
+    participant RAG as "RagOrchestrationService"
+    participant Router as "LlmProviderRouter"
+    participant Hybrid as "HybridSearchService"
+    participant DB as "PostgreSQL (pgvector + FTS)"
+    participant LLM as "Provedor LLM Ativo (Gemini/Claude/OpenAI/Nemotron/DeepSeek/Local)"
+
+    Usuario->>UI: Seleciona Assuntos [Tributário, IRPF] e faz pergunta
+    UI->>Controller: POST /api/chat/stream {query, subjectIds, sessionId}
+    Controller->>RAG: generateAnswerStream(query, subjectIds, user, sessionId)
+    RAG->>Router: getActiveChatClient()
+    Router-->>RAG: Retorna ChatClient configurado pelo Admin
+    
+    RAG->>LLM: Prompt de Reescrita de Consulta (com histórico da sessão)
+    LLM-->>RAG: Consulta contextualizada e limpa
+
+    par Busca Semântica Vetorial e Textual por Assunto
+        RAG->>Hybrid: searchHybrid(contextualQuery, subjectIds, topK=5, minScore=0.65)
+        Hybrid->>DB: Busca Vetorial HNSW filtrada por subjectIds
+        Hybrid->>DB: Busca Textual BM25 (tsvector) filtrada por subjectIds
+    end
+    DB-->>Hybrid: Registros compatíveis
+    Hybrid->>Hybrid: Fusão RRF (Reciprocal Rank Fusion)
+    Hybrid-->>RAG: Top Chunks Fundamentados
+
+    alt Score Máximo < Limiar (0.65) ou Nenhum Chunk Encontrado
+        RAG-->>Controller: "Essa informação não consta nos documentos dos assuntos selecionados."
+        Controller-->>UI: Evento SSE de recusa elegante
+    else Chunks Relevantes Encontrados
+        RAG->>LLM: System Prompt Exegese AI + Chunks Reais + Pergunta
+        loop Streaming de Tokens
+            LLM-->>RAG: Chunk textual
+            RAG-->>Controller: Token SSE
+            Controller-->>UI: Atualização contínua do balão de resposta
+        end
+        RAG->>Controller: Evento SSE de Citações com metadados (Doc, Assunto, Página)
+        Controller-->>UI: Renderiza Chips clicáveis com modal de consulta
+    end

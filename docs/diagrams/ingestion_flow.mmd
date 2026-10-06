@@ -1,0 +1,24 @@
+﻿flowchart TD
+    A["Início: Upload de Documento (PDF/Texto)"] --> B["Identificação de Assuntos (N:N)"]
+    B --> C["Cálculo do Hash SHA-256 do Arquivo"]
+    C --> D{"Arquivo já existe na base?"}
+    D -- "Sim (Sem alteração)" --> E["Abortar ou atualizar apenas vínculos de Assuntos"]
+    D -- "Não / Nova Versão" --> F["Persistir Registro em EXEGESE_DOCUMENT"]
+    F --> G["Armazenar arquivo físico no volume de documentos"]
+    G --> H["PdfTextExtractor: Extração de texto página a página"]
+    H --> I["Seleção de Estratégia de Segmentação"]
+    
+    I --> J1["Manuais Estruturados: Regex Canônica (ex. Q&A IRPF)"]
+    I --> J2["Legislação: Artigos, Parágrafos, Incisos"]
+    I --> J3["Documentos Gerais: Chunking Hierárquico com Overlap"]
+    
+    J1 --> K["Geração de Chunks com Metadados (Página, Título, Assuntos)"]
+    J2 --> K
+    J3 --> K
+    
+    K --> L["Cálculo de Hash SHA-256 de cada Chunk"]
+    L --> M["Geração de Embeddings em Lotes (Batch) com Rate Limiting"]
+    M --> N["Inserção no PostgreSQL 17 (pgvector + GIN tsvector)"]
+    N --> O["Vinculação N:N na tabela DOCUMENT_SUBJECT"]
+    O --> P["Atualização do Status do Documento para 'INDEXED'"]
+    P --> Q["Fim: Documento Disponível para Pesquisa"]

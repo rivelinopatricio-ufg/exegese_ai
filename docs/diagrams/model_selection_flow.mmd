@@ -1,0 +1,17 @@
+﻿flowchart TD
+    Admin["Administrador no Painel Web (/admin/models)"] --> Selecao["Seleciona Provedor Ativo"]
+    Selecao --> P1["Google Gemini (Flash / Pro)"]
+    Selecao --> P2["Anthropic Claude (3.5 / 3.7 Sonnet)"]
+    Selecao --> P3["OpenAI ChatGPT (GPT-4o / GPT-4o-mini)"]
+    Selecao --> P4["NVIDIA Nemotron (Llama-3.1-Nemotron via NIM)"]
+    Selecao --> P5["DeepSeek AI (DeepSeek-V3 / R1)"]
+    Selecao --> P6["Processamento Local (Ollama)"]
+
+    P1 & P2 & P3 & P4 & P5 & P6 --> Chave{"Origem da Chave de API"}
+    Chave -- "Definida no .env / Variável de Ambiente" --> SalvarConfig["Atualiza flag is_default no banco de dados"]
+    Chave -- "Informada na tela do Painel" --> Cripto["Criptografia AES-256 no banco de dados"]
+    Cripto --> SalvarConfig
+    
+    SalvarConfig --> Evento["Publicação de ApplicationEvent: ActiveModelChangedEvent"]
+    Evento --> Router["LlmProviderRouter recarrega ChatClient em tempo de execução"]
+    Router --> Pronto["Próxima pergunta dos usuários já utiliza o novo modelo sem reiniciar"]
