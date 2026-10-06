@@ -1,0 +1,44 @@
+server:
+  port: 0
+
+spring:
+  application:
+    name: exegese-ai-test
+  datasource:
+    url: jdbc:h2:mem:exegese_test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    open-in-view: false
+    hibernate:
+      ddl-auto: create-drop
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: test-client-id
+            client-secret: test-client-secret
+            scope:
+              - openid
+              - profile
+              - email
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.autoconfigure.vertexai.gemini.VertexAiGeminiAutoConfiguration
+      - org.springframework.ai.autoconfigure.openai.OpenAiAutoConfiguration
+      - org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+
+exegese:
+  initial-admin-email: admin@exegese.ai
+  upload-dir: ./target/test-uploads
+  embedding-model: text-embedding-004
+  default-llm-provider: GEMINI
+  similarity-threshold: 0.65
+
+logging:
+  level:
+    root: WARN
+    br.org.rivelino.exegese_ai: DEBUG

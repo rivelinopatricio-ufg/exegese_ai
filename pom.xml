@@ -5,20 +5,20 @@
   <parent>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-parent</artifactId>
-    <version>4.2.0-M2</version>
+    <version>3.4.2</version>
     <relativePath/>
   </parent>
-  <groupId>br.gov.exegese</groupId>
+  <groupId>br.org.rivelino</groupId>
   <artifactId>exegese-ai</artifactId>
   <version>1.0.0-SNAPSHOT</version>
   <name>Exegese AI</name>
   <description>Plataforma RAG Especialista &amp; Agnóstica a Acervos Documentais</description>
 
   <properties>
-    <java.version>25</java.version>
-    <maven.compiler.source>25</maven.compiler.source>
-    <maven.compiler.target>25</maven.compiler.target>
-    <maven.compiler.release>25</maven.compiler.release>
+    <java.version>21</java.version>
+    <maven.compiler.source>21</maven.compiler.source>
+    <maven.compiler.target>21</maven.compiler.target>
+    <maven.compiler.release>21</maven.compiler.release>
     <spring-ai.version>1.0.0-M5</spring-ai.version>
     <pdfbox.version>3.0.4</pdfbox.version>
     <bucket4j.version>8.10.1</bucket4j.version>
@@ -34,6 +34,26 @@
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-thymeleaf</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+
+    <!-- Segurança & Google OAuth2 / OIDC -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-oauth2-client</artifactId>
+    </dependency>
+
+    <!-- Persistência JPA & Relacional -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
     </dependency>
 
     <!-- Spring AI Core, Models & PGVector -->
@@ -75,6 +95,13 @@
       <version>${bucket4j.version}</version>
     </dependency>
 
+    <!-- Banco em memória para testes isolados -->
+    <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <scope>test</scope>
+    </dependency>
+
     <!-- Testes Unitários e de Integração -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -82,8 +109,13 @@
       <scope>test</scope>
     </dependency>
     <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
       <groupId>org.testcontainers</groupId>
-      <artifactId>testcontainers-postgresql</artifactId>
+      <artifactId>postgresql</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>
@@ -106,7 +138,7 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
         <configuration>
-          <release>25</release>
+          <release>21</release>
         </configuration>
       </plugin>
       <plugin>

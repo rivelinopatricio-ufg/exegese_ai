@@ -1,0 +1,65 @@
+server:
+  port: ${PORT:8080}
+
+spring:
+  application:
+    name: exegese-ai
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/exegese_db}
+    username: ${SPRING_DATASOURCE_USERNAME:exegese_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:exegese_password}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      idle-timeout: 300000
+      max-lifetime: 900000
+      connection-timeout: 20000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+  thymeleaf:
+    cache: false
+    mode: HTML
+    encoding: UTF-8
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_CLIENT_ID:dummy-client-id}
+            client-secret: ${GOOGLE_CLIENT_SECRET:dummy-client-secret}
+            scope:
+              - openid
+              - profile
+              - email
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:dummy-key}
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+    vertex:
+      ai:
+        gemini:
+          project-id: ${VERTEX_AI_PROJECT_ID:dummy-project}
+          location: ${VERTEX_AI_LOCATION:us-central1}
+
+exegese:
+  initial-admin-email: ${INITIAL_ADMIN_EMAIL:admin@exegese.ai}
+  upload-dir: ${UPLOAD_DIR:./uploads}
+  embedding-model: text-embedding-004
+  default-llm-provider: GEMINI
+  similarity-threshold: 0.65
+
+logging:
+  level:
+    root: INFO
+    br.org.rivelino.exegese_ai: DEBUG
