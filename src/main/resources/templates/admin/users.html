@@ -10,41 +10,78 @@
     <header class="flex justify-between items-center mb-8 pb-4 border-b border-slate-700">
         <div>
             <h1 class="text-2xl font-bold">Painel Administrativo</h1>
-            <p class="text-slate-400 text-sm">Gestão de Usuários e Governança de Acesso</p>
+            <p class="text-slate-400 text-sm">Gestão de Usuários, Papéis e Permissões Granulares</p>
         </div>
         <div class="flex gap-4">
-            <a th:href="@{/}" class="text-sky-400 hover:underline">Voltar ao Chat</a>
+            <a th:href="@{/admin/subjects}" class="text-sky-400 hover:underline">Gestão de Assuntos</a>
+            <a th:href="@{/admin/documents}" class="text-sky-400 hover:underline">Documentos</a>
+            <a th:href="@{/}" class="text-slate-300 hover:underline">Chat</a>
             <a th:href="@{/logout}" class="text-red-400 hover:underline">Sair</a>
         </div>
     </header>
 
     <main class="bg-slate-800 rounded-xl p-6 shadow-xl border border-slate-700">
-        <h2 class="text-xl font-semibold mb-4">Usuários Cadastrados</h2>
-        <table class="w-full text-left border-collapse">
-            <thead>
-                <tr class="border-b border-slate-700 text-slate-400 text-sm">
-                    <th class="py-3 px-4">Nome</th>
-                    <th class="py-3 px-4">E-mail</th>
-                    <th class="py-3 px-4">Papel (Role)</th>
-                    <th class="py-3 px-4">Status</th>
-                    <th class="py-3 px-4">Último Acesso</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr th:each="user : ${users}" class="border-b border-slate-700/50 hover:bg-slate-750">
-                    <td class="py-3 px-4 font-medium" th:text="${user.name}">Nome</td>
-                    <td class="py-3 px-4 text-slate-300" th:text="${user.email}">email@dominio.com</td>
-                    <td class="py-3 px-4">
-                        <span class="px-2 py-1 text-xs rounded bg-sky-900/60 text-sky-200" th:text="${user.role}">ROLE_USER</span>
-                    </td>
-                    <td class="py-3 px-4">
-                        <span th:if="${user.active}" class="text-emerald-400 text-sm">Ativo</span>
-                        <span th:unless="${user.active}" class="text-red-400 text-sm">Inativo</span>
-                    </td>
-                    <td class="py-3 px-4 text-sm text-slate-400" th:text="${user.lastLoginAt != null ? user.lastLoginAt : '-'}">-</td>
-                </tr>
-            </tbody>
-        </table>
+        <h2 class="text-xl font-semibold mb-6">Equipe e Controle de Acesso</h2>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="border-b border-slate-700 text-slate-400 text-sm">
+                        <th class="py-3 px-4">Usuário</th>
+                        <th class="py-3 px-4">Papel Atual</th>
+                        <th class="py-3 px-4">Status</th>
+                        <th class="py-3 px-4">Alterar Papel</th>
+                        <th class="py-3 px-4">Conceder Assuntos</th>
+                        <th class="py-3 px-4 text-right">Ação</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:each="user : ${users}" class="border-b border-slate-700/50 hover:bg-slate-750">
+                        <td class="py-3 px-4">
+                            <div class="font-medium" th:text="${user.name}">Nome</div>
+                            <div class="text-xs text-slate-400" th:text="${user.email}">email@dominio.com</div>
+                        </td>
+                        <td class="py-3 px-4">
+                            <span th:class="${user.role.name() == 'ROLE_ADMIN' ? 'px-2 py-1 text-xs rounded bg-purple-900/60 text-purple-200 font-semibold' : (user.role.name() == 'ROLE_OPERATOR' ? 'px-2 py-1 text-xs rounded bg-blue-900/60 text-blue-200 font-semibold' : 'px-2 py-1 text-xs rounded bg-slate-700 text-slate-300 font-semibold')}"
+                                  th:text="${user.role}">ROLE_USER</span>
+                        </td>
+                        <td class="py-3 px-4">
+                            <span th:if="${user.active}" class="px-2 py-1 text-xs rounded bg-emerald-900/60 text-emerald-200">Ativo</span>
+                            <span th:unless="${user.active}" class="px-2 py-1 text-xs rounded bg-red-900/60 text-red-200">Suspenso</span>
+                        </td>
+                        <td class="py-3 px-4">
+                            <form th:action="@{/admin/users/{id}/role(id=${user.id})}" method="post" class="flex gap-2">
+                                <select name="role" class="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-slate-200">
+                                    <option value="ROLE_USER" th:selected="${user.role.name() == 'ROLE_USER'}">USER</option>
+                                    <option value="ROLE_OPERATOR" th:selected="${user.role.name() == 'ROLE_OPERATOR'}">OPERATOR</option>
+                                    <option value="ROLE_ADMIN" th:selected="${user.role.name() == 'ROLE_ADMIN'}">ADMIN</option>
+                                </select>
+                                <button type="submit" class="px-2 py-1 bg-sky-600 text-white rounded text-xs hover:bg-sky-500">Salvar</button>
+                            </form>
+                        </td>
+                        <td class="py-3 px-4">
+                            <form th:action="@{/admin/users/{id}/permissions(id=${user.id})}" method="post" class="flex gap-2 items-center">
+                                <select name="subjectIds" class="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-slate-200 max-w-[150px]">
+                                    <option th:each="sub : ${subjects}" th:value="${sub.id}" th:text="${sub.name}">Assunto</option>
+                                </select>
+                                <select name="level" class="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-slate-200">
+                                    <option value="READ">Leitura</option>
+                                    <option value="WRITE">Escrita</option>
+                                    <option value="MANAGE">Gestão</option>
+                                </select>
+                                <button type="submit" class="px-2 py-1 bg-emerald-600 text-white rounded text-xs hover:bg-emerald-500">Vincular</button>
+                            </form>
+                        </td>
+                        <td class="py-3 px-4 text-right">
+                            <form th:action="@{/admin/users/{id}/toggle-active(id=${user.id})}" method="post">
+                                <button type="submit" 
+                                        th:class="${user.active ? 'px-2 py-1 bg-amber-600/80 text-white rounded text-xs hover:bg-amber-500' : 'px-2 py-1 bg-emerald-600/80 text-white rounded text-xs hover:bg-emerald-500'}"
+                                        th:text="${user.active ? 'Suspender' : 'Reativar'}">Alternar</button>
+                            </form>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
     </main>
 </body>
 </html>

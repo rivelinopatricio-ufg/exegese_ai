@@ -19,9 +19,14 @@
  *******************************************************************************/
 package br.org.rivelino.exegese_ai.service;
 
+import br.org.rivelino.exegese_ai.domain.entity.ExegeseSubject;
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseUser;
+import br.org.rivelino.exegese_ai.domain.entity.UserSubjectPermission;
+import br.org.rivelino.exegese_ai.domain.entity.UserSubjectPermissionId;
 import br.org.rivelino.exegese_ai.domain.enums.UserRole;
+import br.org.rivelino.exegese_ai.repository.ExegeseSubjectRepository;
 import br.org.rivelino.exegese_ai.repository.ExegeseUserRepository;
+import br.org.rivelino.exegese_ai.repository.UserSubjectPermissionRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,11 +45,17 @@ import java.util.UUID;
 public class UserService {
 
     private final ExegeseUserRepository userRepository;
+    private final ExegeseSubjectRepository subjectRepository;
+    private final UserSubjectPermissionRepository permissionRepository;
     private final String initialAdminEmail;
 
     public UserService(ExegeseUserRepository userRepository,
+                       ExegeseSubjectRepository subjectRepository,
+                       UserSubjectPermissionRepository permissionRepository,
                        @Value("${exegese.initial-admin-email:admin@exegese.ai}") String initialAdminEmail) {
         this.userRepository = userRepository;
+        this.subjectRepository = subjectRepository;
+        this.permissionRepository = permissionRepository;
         this.initialAdminEmail = initialAdminEmail;
     }
 
@@ -104,5 +115,31 @@ public class UserService {
             .orElseThrow(() -> new IllegalArgumentException("User not found with id: " + id));
         user.setActive(!user.isActive());
         return userRepository.save(user);
+    }
+
+    @Transactional
+    public UserSubjectPermission grantSubjectPermission(UUID userId, UUID subjectId, String level) {
+        ExegeseUser user = userRepository.findById(userId)
+            .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
+        ExegeseSubject subject = subjectRepository.findById(subjectId)
+            .orElseThrow(() -> new IllegalArgumentException("Subject not found: " + subjectId));
+
+        UserSubjectPermissionId permId = new UserSubjectPermissionId(userId, subjectId);
+        UserSubjectPermission perm = permissionRepository.findById(permId)
+            .orElseGet(() -> new UserSubjectPermission(user, subject, level));
+
+        perm.setPermissionLevel(level);
+        return permissionRepository.save(perm);
+    }
+
+    @Transactional
+    public void revokeSubjectPermission(UUID userId, UUID subjectId) {
+        UserSubjectPermissionId permId = new UserSubjectPermissionId(userId, subjectId);
+        permissionRepository.deleteById(permId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<UserSubjectPermission> getUserPermissions(UUID userId) {
+        return permissionRepository.findByIdUserId(userId);
     }
 }

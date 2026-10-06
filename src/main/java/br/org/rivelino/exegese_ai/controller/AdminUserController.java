@@ -19,8 +19,10 @@
  *******************************************************************************/
 package br.org.rivelino.exegese_ai.controller;
 
+import br.org.rivelino.exegese_ai.domain.entity.ExegeseSubject;
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseUser;
 import br.org.rivelino.exegese_ai.domain.enums.UserRole;
+import br.org.rivelino.exegese_ai.repository.ExegeseSubjectRepository;
 import br.org.rivelino.exegese_ai.service.UserService;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Controller;
@@ -41,21 +43,35 @@ import java.util.UUID;
 public class AdminUserController {
 
     private final UserService userService;
+    private final ExegeseSubjectRepository subjectRepository;
 
-    public AdminUserController(UserService userService) {
+    public AdminUserController(UserService userService, ExegeseSubjectRepository subjectRepository) {
         this.userService = userService;
+        this.subjectRepository = subjectRepository;
     }
 
     @GetMapping
     public String listUsers(Model model) {
         List<ExegeseUser> users = userService.findAll();
+        List<ExegeseSubject> subjects = subjectRepository.findByActiveTrue();
         model.addAttribute("users", users);
+        model.addAttribute("subjects", subjects);
         return "admin/users";
     }
 
     @PostMapping("/{id}/role")
     public String updateUserRole(@PathVariable UUID id, @RequestParam UserRole role) {
         userService.updateRole(id, role);
+        return "redirect:/admin/users";
+    }
+
+    @PostMapping("/{id}/permissions")
+    public String updateUserPermissions(@PathVariable UUID id,
+                                        @RequestParam List<UUID> subjectIds,
+                                        @RequestParam(defaultValue = "READ") String level) {
+        for (UUID subjectId : subjectIds) {
+            userService.grantSubjectPermission(id, subjectId, level);
+        }
         return "redirect:/admin/users";
     }
 
