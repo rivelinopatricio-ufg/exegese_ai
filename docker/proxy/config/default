@@ -1,0 +1,69 @@
+# ==============================================================================
+# Exegese AI - NGINX Site Configuration (SWAG / LinuxServer.io)
+# ==============================================================================
+
+# HTTP Block: Automatic redirect to HTTPS
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    server_name _;
+
+    return 301 https://$host:$server_port$request_uri;
+}
+
+# HTTPS Block: SWAG-managed TLS termination and Spring Boot upstream
+server {
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
+
+    server_name _;
+
+    # Standardized and secure TLS directives managed by SWAG (ciphers, protocols, certs)
+    include /config/nginx/ssl.conf;
+
+    client_max_body_size 10M;
+
+    # 1. SSE Streaming Route for RAG (Mandatory buffering deactivation)
+    location /api/chat/stream {
+        proxy_pass http://app:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_set_header X-Accel-Buffering no;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Port $server_port;
+    }
+
+    # 2. Manuals and PDF Documents Upload Route (Expanded 50MB limit)
+    location /admin/documents/upload {
+        client_max_body_size 50M;
+        proxy_pass http://app:8080;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Port $server_port;
+    }
+
+    # 3. General Application Route (Spring Boot Web UI and APIs)
+    location / {
+        proxy_pass http://app:8080;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Port $server_port;
+    }
+}

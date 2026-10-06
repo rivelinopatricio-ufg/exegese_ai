@@ -1,3 +1,8 @@
+# ==============================================================================
+# Exegese AI - Production Multi-Container Orchestration
+# Services: PostgreSQL 17 + PGVector, Spring Boot 4.1.1, SWAG Reverse Proxy
+# ==============================================================================
+
 version: "3.8"
 
 services:
@@ -27,8 +32,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    ports:
-      - "${PORT:-8080}:8080"
+    # Port 8080 is isolated on the internal network exegese-net and exposed only to the proxy
     environment:
       SPRING_PROFILES_ACTIVE: local
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-exegese_db}
@@ -47,12 +51,46 @@ services:
     volumes:
       - storage_data:/app/storage
       - upload_data:/app/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - exegese-net
     restart: unless-stopped
+
+  proxy:
+    image: br.org.rivelino/exegese-ai-proxy:latest
+    container_name: exegese-ai-proxy
+    build:
+      context: ./docker/proxy
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Sao_Paulo
+      - URL=${SERVER_NAME:-exegese-ai.sytes.net}
+      - SUBDOMAINS=
+      - VALIDATION=${VALIDATION:-http}
+      - EMAIL=${LETSENCRYPT_EMAIL:-admin@exegese.ai}
+      - STAGING=${LETSENCRYPT_STAGING:-false}
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - proxy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - exegese-net
+    restart: always
 
 networks:
   exegese-net:
@@ -65,4 +103,5 @@ volumes:
     driver: local
   upload_data:
     driver: local
-
+  proxy_config:
+    driver: local

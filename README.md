@@ -1,8 +1,9 @@
 # Exegese AI — Plataforma RAG de Rigor Exegético e Grounding Normativo
 
-[![Java](https://img.shields.io/badge/Java-25%20%28Target%2021%29-orange.svg)](https://openjdk.org/)
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4.2%20LTS-brightgreen.svg)](https://spring.io/projects/spring-boot)
-[![Spring AI](https://img.shields.io/badge/Spring%20AI-1.0.0--M5-blue.svg)](https://spring.io/projects/spring-ai)
+[![Java](https://img.shields.io/badge/Java-25%20Nativo%20%28Major%2069%29-orange.svg)](https://openjdk.org/)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.1.1%20GA-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Spring AI](https://img.shields.io/badge/Spring%20AI-2.0.1-blue.svg)](https://spring.io/projects/spring-ai)
+[![Reverse Proxy](https://img.shields.io/badge/Proxy-SWAG%20%28NGINX%20%2B%20Certbot%20%2B%20Fail2ban%29-success.svg)](https://docs.linuxserver.io/general/swag)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17%20%2B%20pgvector-blue.svg)](https://github.com/pgvector/pgvector)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -16,6 +17,13 @@
   > *"Essa informação não consta nos documentos dos assuntos selecionados."*
 - **Busca Híbrida de Alta Precisão (RRF)**: Combina indexação vetorial densa com índice HNSW (distância por cosseno) e busca lexical textual (*Full-Text Search* com `tsvector` e `tsquery` em português), fundindo os rankings através do algoritmo **Reciprocal Rank Fusion (RRF)**:
   $$Score_{RRF} = \frac{1}{60 + rank_{vec}} + \frac{1}{60 + rank_{txt}}$$
+- **Proxy Reverso Hardened com Gestão Autônoma de Certificados (SWAG / NGINX)**:
+  - Borda de segurança baseada na imagem `linuxserver/swag`, consolidando **NGINX**, **Certbot integrado**, **s6-overlay init system** e **Fail2ban**.
+  - **Emissão no Startup**: O próprio proxy solicita o certificado Let's Encrypt na inicialização antes de expor os serviços.
+  - **Renovação Automática via Cron**: O processo cron interno do contêiner verifica periodicamente (2x ao dia) e renova silenciosamente os certificados SSL/TLS com recarregamento suave (*reload*) do NGINX.
+  - **Isolamento de Aplicação**: A porta 8080 do Spring Boot fica totalmente confinada na rede interna Docker (`exegese-net`).
+  - **Otimização para SSE**: Rota `/api/chat/stream` com `proxy_buffering off;`, `X-Accel-Buffering no;` e timeout de 3600s para streaming contínuo sem bufferização.
+  - **Portas e Host Customizáveis**: Permite expor portas alternativas (ex: 8080/8443) caso as portas padrão 80/443 estejam ocupadas no servidor host.
 - **Arquitetura Multi-Provedor Dinâmica**: Roteamento transparente e em tempo de execução entre 6 ecossistemas de IA de ponta:
   - **Google Gemini** (Gemini 2.5 Flash / Pro)
   - **Anthropic Claude** (Claude 3.5 Sonnet)
@@ -32,40 +40,46 @@
 ## 2. Arquitetura da Solução
 
 ```
-                    ┌──────────────────────────────────────────────┐
-                    │               Navegador Web                  │
-                    │   Thymeleaf + Tailwind CSS + HTMX + SSE      │
-                    └──────────────────────┬───────────────────────┘
-                                           │ HTTPS / SSE
-                                           ▼
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                             Exegese AI Application                               │
-│                                                                                  │
-│  ┌───────────────────────┐  ┌────────────────────────┐  ┌─────────────────────┐ │
-│  │   Security Pipeline   │  │   Input Sanitization   │  │  Rate Limiting      │ │
-│  │ Google OAuth2 / OIDC  │  │ Anti-Prompt Injection   │  │ Bucket4j (20 r/min) │ │
-│  └───────────────────────┘  └────────────────────────┘  └─────────────────────┘ │
-│                                                                                  │
-│  ┌─────────────────────────────────────────────────────────────────────────────┐ │
-│  │                         RAG Orchestration Core                              │ │
-│  │  Query Rewriting ──► Hybrid Search (RRF) ──► Anti-Hallucination Guard       │ │
-│  └──────────────────────────────────────┬──────────────────────────────────────┘ │
-│                                         │                                        │
-│  ┌──────────────────────────────────────▼──────────────────────────────────────┐ │
-│  │                     Dynamic Multi-Provider AI Router                        │ │
-│  │   [Gemini]   [Claude]   [OpenAI]   [Nemotron]   [DeepSeek]   [Ollama Local] │ │
-│  └─────────────────────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────┬────────────────────────────────────────┘
-                                          │
-                                          ▼
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                         PostgreSQL 17 + pgvector                                 │
-│                                                                                  │
-│  - Chunks Vetorizados (HNSW Cosine Distance)                                     │
-│  - Busca Textual em Português (GIN tsvector)                                     │
-│  - Particionamento N:N (Documentos <-> Assuntos)                                 │
-│  - Chaves de API Criptografadas com AES-256                                      │
-└──────────────────────────────────────────────────────────────────────────────────┘
+                              CLIENTES WEB / NAVEGADORES
+                                         │
+                                         ▼ Portas Customizadas (${HTTP_PORT} / ${HTTPS_PORT})
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                        PROXY REVERSO HARDENED (SWAG)                                   │
+│                        (Imagem: linuxserver/swag:latest)                               │
+│                         Domínio: ${SERVER_NAME} / ${URL}                               │
+│                                                                                        │
+│  - Gestão TLS/SSL Autônoma: Solicitação no Startup + Renovação Automática via Cron    │
+│  - Proteção Ativa contra Intrusão: Fail2ban (cap_add: NET_ADMIN)                       │
+│  - Ocultação de Assinatura: server_tokens off                                          │
+│  - Otimização SSE: proxy_buffering off; proxy_read_timeout 3600s                       │
+│  - Limites de Payload: 50MB (upload de PDF) / 10MB (geral)                             │
+│  - Repasse de Cabeçalhos: X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Port         │
+│  - Volume Persistente Único: proxy_config:/config                                      │
+└───────────────────────────────────────┬────────────────────────────────────────────────┘
+                                        │ Rede Interna Docker (exegese-net)
+                                        │ Porta 8080 (ISOLADA)
+                                        ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                        APLICAÇÃO EXEGESE AI (SPRING BOOT 4.1.1)                        │
+│                               Runtime: Java 25 Nativo                                  │
+│                                                                                        │
+│  - server.forward-headers-strategy: framework                                          │
+│  - Spring AI 2.0.1 (RAG, ChatClient, RRF Search)                                       │
+│  - RateLimitFilter (Bucket4j - 2ª camada de segurança)                                 │
+│  - InputSanitizationFilter (Prompt Injection)                                          │
+│  - Google OAuth2 Client (spring.security.oauth2.client.registration.google.*)          │
+│  - Actuator (/actuator/health)                                                         │
+└───────────────────────────────────────┬────────────────────────────────────────────────┘
+                                        │ Porta 5432 (Interna)
+                                        ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                               POSTGRESQL 17 + PGVECTOR                                 │
+│                                                                                        │
+│  - Chunks Vetorizados (HNSW Cosine Distance)                                           │
+│  - Busca Textual em Português (GIN tsvector)                                           │
+│  - Particionamento N:N (Documentos <-> Assuntos)                                       │
+│  - Chaves de API Criptografadas com AES-256                                            │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -77,8 +91,8 @@
 - Utilitário `curl`
 - Navegador moderno com suporte a JavaScript
 
-### 3.2. Instalação Automática (Recomendada)
-Clone o repositório e execute o script de instalação interativo:
+### 3.2. Instalação Automática com `install.sh`
+Clone o repositório e execute o script de instalação:
 
 ```bash
 git clone https://github.com/rivelinopatricio-ufg/exegese_ai.git
@@ -87,42 +101,89 @@ chmod +x install.sh
 ./install.sh
 ```
 
-O assistente solicitará:
-1. Credenciais do **Google OAuth2** (`Client ID` e `Client Secret`).
-2. E-mail do Administrador Inicial (recebe `ROLE_ADMIN` no 1º login).
-3. Chaves de API dos provedores de IA desejados (ex: Gemini, OpenAI ou Claude).
-4. Em seguida, sobe os contêineres e aguarda o healthcheck retornar status `UP`.
+O assistente interativo ou as flags de linha de comando permitem configurar:
+1. **Domínio ou Host**: Nome de host ou FQDN (ex: `exegese.empresa.gov.br` ou `localhost`).
+2. **Portas Públicas**: Portas HTTP e HTTPS personalizadas (padrão: 80 e 443; sugere 8080 e 8443 se estiverem ocupadas).
+3. **E-mail Let's Encrypt**: Para notificações e emissão de certificados SSL válidos.
+4. **Google OAuth2**: Chaves canônicas `Client ID` e `Client Secret`.
+5. **E-mail do Administrador Inicial**: Recebe o perfil `ROLE_ADMIN` no primeiro login.
+6. **Chaves de Provedores AI**: Gemini, OpenAI, Claude, etc.
 
-Após a inicialização, acesse:
-- **Painel Principal**: [http://localhost:8080](http://localhost:8080)
-- **Página de Login**: [http://localhost:8080/login](http://localhost:8080/login)
-- **Gestão de Usuários**: [http://localhost:8080/admin/users](http://localhost:8080/admin/users)
-- **Gestão de Provedores AI**: [http://localhost:8080/admin/models](http://localhost:8080/admin/models)
-- **Métricas e Saúde**: [http://localhost:8080/actuator/health](http://localhost:8080/actuator/health)
-
----
-
-## 4. Comandos do Script `install.sh`
-
-| Comando | Descrição |
-| :--- | :--- |
-| `./install.sh` | Executa o instalador completo e assistente de ambiente. |
-| `./install.sh --no-ingest` | Inicia o ambiente pulando a ingestão inicial de documentos. |
-| `./install.sh --uninstall` | Para os contêineres, remove volumes persistentes e apaga `.env`. |
-| `./install.sh --help` | Exibe o manual de opções e encerra. |
+Após a inicialização do SWAG e o healthcheck da aplicação, acesse:
+- **Painel Principal**: `https://${SERVER_NAME}:${HTTPS_PORT}` (ou `http://${SERVER_NAME}:${HTTP_PORT}`)
+- **Página de Login**: `https://${SERVER_NAME}:${HTTPS_PORT}/login`
+- **Gestão de Usuários**: `https://${SERVER_NAME}:${HTTPS_PORT}/admin/users`
+- **Gestão de Provedores AI**: `https://${SERVER_NAME}:${HTTPS_PORT}/admin/models`
+- **Saúde e Diagnóstico**: `https://${SERVER_NAME}:${HTTPS_PORT}/actuator/health`
 
 ---
 
-## 5. Execução em Desenvolvimento Local
+## 4. Comandos e Flags do Script `install.sh`
 
-Para executar o projeto diretamente com Maven e Java 25 / 21:
+O instalador suporta execução tanto interativa quanto automatizada (CI/CD / Provisionamento) via argumentos de linha de comando:
 
-### 5.1. Subir apenas o Banco de Dados (PostgreSQL + pgvector)
+| Flag / Parâmetro | Descrição | Padrão |
+| :--- | :--- | :--- |
+| `-h, --help` | Exibe a mensagem de ajuda e encerra. | - |
+| `-H, --host <hostname>` | Nome de host ou FQDN (ex: `exegese.empresa.gov.br` ou `localhost`). | `localhost` |
+| `--http-port <porta>` | Porta pública HTTP exposta pelo SWAG NGINX. | `80` |
+| `--https-port <porta>` | Porta pública HTTPS exposta pelo SWAG NGINX. | `443` |
+| `--email-ssl <email>` | E-mail para emissão e avisos do certificado Let's Encrypt. | - |
+| `--google-client-id <id>` | Google OAuth2 Client ID (`spring.security.oauth2.client.registration.google.client-id`). | - |
+| `--google-client-secret <sec>` | Google OAuth2 Client Secret (`spring.security.oauth2.client.registration.google.client-secret`). | - |
+| `--initial-admin <email>` | E-mail do administrador inicial (recebe `ROLE_ADMIN`). | `admin@exegese.ai` |
+| `--gemini-key <key>` | Chave de API do Google Gemini. | - |
+| `--openai-key <key>` | Chave de API da OpenAI. | - |
+| `--anthropic-key <key>` | Chave de API da Anthropic Claude. | - |
+| `--no-ingest` | Inicia a plataforma sem disparar a ingestão inicial de documentos. | `false` |
+| `--uninstall` | Para os contêineres, remove volumes persistentes e apaga o `.env`. | `false` |
+
+### Exemplos de Uso:
+```bash
+# Execução interativa padrão
+./install.sh
+
+# Produção com domínio institucional e portas padrão
+./install.sh -H exegese.empresa.gov.br --http-port 80 --https-port 443 --email-ssl admin@empresa.gov.br
+
+# Servidor com portas alternativas (8080 HTTP / 8443 HTTPS) e credenciais Google
+./install.sh -H exegese.empresa.gov.br --http-port 8080 --https-port 8443 \
+  --google-client-id "xxxx.apps.googleusercontent.com" \
+  --google-client-secret "GOCSPX-yyyy" \
+  --initial-admin "admin@empresa.gov.br"
+
+# Desinstalação completa e limpeza de dados
+./install.sh --uninstall
+```
+
+---
+
+## 5. Configuração do Google Cloud Console (OAuth2 / OIDC)
+
+Para habilitar a autenticação com o Google Sign-In, registre uma credencial **ID do cliente OAuth 2.0** no [Google Cloud Console](https://console.cloud.google.com/apis/credentials):
+
+1. **Tipo de Aplicativo**: Aplicativo Web (*Web application*).
+2. **Origens JavaScript autorizadas**:
+   - Produção: `https://${SERVER_NAME}:${HTTPS_PORT}` (ou `https://${SERVER_NAME}` na porta 443)
+   - Desenvolvimento Local: `http://localhost:${HTTP_PORT}`
+3. **URIs de redirecionamento autorizados**:
+   - Produção: `https://${SERVER_NAME}:${HTTPS_PORT}/login/oauth2/code/google`
+   - Desenvolvimento Local: `http://localhost:${HTTP_PORT}/login/oauth2/code/google`
+
+O script `install.sh` calcula e exibe essa URL exata ao final da execução.
+
+---
+
+## 6. Execução em Desenvolvimento Local
+
+Para executar o projeto diretamente na máquina host com Maven e Java 25 nativo:
+
+### 6.1. Subir apenas o Banco de Dados (PostgreSQL + pgvector)
 ```bash
 docker compose up -d postgres
 ```
 
-### 5.2. Executar a Aplicação Spring Boot
+### 6.2. Executar a Aplicação Spring Boot
 ```bash
 mvn spring-boot:run
 ```
@@ -131,12 +192,12 @@ A aplicação subirá na porta `8080`.
 
 ---
 
-## 6. Suíte de Testes Automatizados
+## 7. Suíte de Testes Automatizados
 
-O projeto conta com **41 testes de integração automatizados** organizados em 12 suítes, cobrindo todo o ciclo funcional da plataforma:
+O projeto conta com **41 testes automatizados** sob **Spring Boot 4.1.1** e **Java 25 Nativo** (`major version 69`), com 100% de taxa de aprovação:
 
 ```bash
-mvn test
+mvn clean test
 ```
 
 ### Principais Suítes de Teste:
@@ -147,18 +208,29 @@ mvn test
 - `MultiProviderModelIntegrationTest`: Teste de alternância entre os 6 provedores de IA e criptografia AES-256 de chaves de API.
 - `DocumentIngestionIntegrationTest`: Testes de extração PDF, segmentação polimórfica e deduplicação de chunks por SHA-256.
 - `HybridSearchIntegrationTest`: Teste de fusão de busca vetorial e textual via RRF.
+- `AdminUserManagementIntegrationTest`: Testes de gestão administrativa de usuários e concessão granular de permissões.
+- `SubjectAndDocumentCatalogIntegrationTest`: Testes de catálogo de assuntos e documentos.
+- `ChatInterfaceIntegrationTest`: Testes dos endpoints web de chat e streaming SSE.
+- `EntityPersistenceIntegrationTest`: Testes de integridade relacional JPA.
+- `ExegeseAiApplicationTests`: Teste de inicialização do contexto Spring Boot 4.
 
 ---
 
-## 7. Variáveis de Ambiente (`.env`)
+## 8. Variáveis de Ambiente (`.env`)
 
 | Variável | Padrão | Descrição |
 | :--- | :--- | :--- |
+| `SERVER_NAME` | `exegese-ai.sytes.net` | FQDN ou nome de host do servidor (para SSL e cabeçalhos NGINX). |
+| `HTTP_PORT` | `80` | Porta pública HTTP exposta pelo contêiner SWAG. |
+| `HTTPS_PORT` | `443` | Porta pública HTTPS exposta pelo contêiner SWAG. |
+| `LETSENCRYPT_EMAIL` | `admin@exegese.ai` | E-mail para cadastro e alertas de expiração do Let's Encrypt. |
+| `LETSENCRYPT_STAGING` | `false` | Se `true`, utiliza o ambiente de staging do Let's Encrypt (para testes). |
+| `VALIDATION` | `http` | Método de validação ACME do Certbot no SWAG (`http`, `dns`, `duckdns`). |
 | `POSTGRES_DB` | `exegese_db` | Nome do banco de dados relacional. |
 | `POSTGRES_USER` | `exegese_user` | Usuário do banco PostgreSQL. |
 | `POSTGRES_PASSWORD` | `exegese_password` | Senha do banco PostgreSQL. |
 | `POSTGRES_PORT` | `5432` | Porta mapeada do PostgreSQL. |
-| `PORT` | `8080` | Porta HTTP da aplicação web. |
+| `PORT` | `8080` | Porta interna da aplicação web (isolada na rede Docker). |
 | `EXEGESE_AES_SECRET` | *(Aleatório 32 chars)* | Chave mestra de criptografia simétrica AES-256. |
 | `INITIAL_ADMIN_EMAIL` | `admin@exegese.ai` | E-mail que recebe privilégios de Administrador no 1º login. |
 | `GOOGLE_CLIENT_ID` | - | Client ID OAuth2 configurado no Google Cloud Console. |
@@ -172,7 +244,7 @@ mvn test
 
 ---
 
-## 8. Estratégias de Chunking Polimórfico
+## 9. Estratégias de Chunking Polimórfico
 
 A plataforma aplica estratégias customizadas de segmentação dependendo da taxonomia e do formato dos documentos:
 
@@ -187,7 +259,7 @@ A plataforma aplica estratégias customizadas de segmentação dependendo da tax
 
 ---
 
-## 9. Licença e Autoria
+## 10. Licença e Autoria
 
 Este projeto é software livre licenciado sob os termos da [Licença MIT](LICENSE).
 
