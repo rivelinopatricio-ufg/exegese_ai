@@ -21,6 +21,8 @@ package br.org.rivelino.exegese_ai.config;
 
 import br.org.rivelino.exegese_ai.security.CustomOidcUserService;
 import br.org.rivelino.exegese_ai.security.GoogleOAuth2SuccessHandler;
+import br.org.rivelino.exegese_ai.security.InputSanitizationFilter;
+import br.org.rivelino.exegese_ai.security.RateLimitFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -40,16 +42,30 @@ public class SecurityConfiguration {
 
     private final CustomOidcUserService customOidcUserService;
     private final GoogleOAuth2SuccessHandler successHandler;
+    private final RateLimitFilter rateLimitFilter;
+    private final InputSanitizationFilter inputSanitizationFilter;
 
     public SecurityConfiguration(CustomOidcUserService customOidcUserService,
-                                 GoogleOAuth2SuccessHandler successHandler) {
+                                 GoogleOAuth2SuccessHandler successHandler,
+                                 RateLimitFilter rateLimitFilter,
+                                 InputSanitizationFilter inputSanitizationFilter) {
         this.customOidcUserService = customOidcUserService;
         this.successHandler = successHandler;
+        this.rateLimitFilter = rateLimitFilter;
+        this.inputSanitizationFilter = inputSanitizationFilter;
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
+            .headers(headers -> headers
+                .contentTypeOptions(org.springframework.security.config.Customizer.withDefaults())
+                .frameOptions(frame -> frame.deny())
+                .httpStrictTransportSecurity(hsts -> hsts.includeSubDomains(true).maxAgeInSeconds(31536000))
+                .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; img-src 'self' data:; connect-src 'self';"))
+            )
+            .addFilterBefore(inputSanitizationFilter, org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)
+            .addFilterBefore(rateLimitFilter, org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)
             .authorizeHttpRequests(authorize -> authorize
                 .requestMatchers("/login", "/error", "/css/**", "/js/**", "/images/**", "/actuator/health", "/favicon.ico").permitAll()
                 .requestMatchers("/admin/users/**", "/admin/models/**").hasRole("ADMIN")

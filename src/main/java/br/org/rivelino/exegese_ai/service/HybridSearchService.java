@@ -191,6 +191,37 @@ public class HybridSearchService {
         }
     }
 
+    private static final Set<String> STOP_WORDS = Set.of(
+            "de", "do", "da", "dos", "das", "em", "no", "na", "nos", "nas", "para", "por",
+            "com", "sem", "sob", "sobre", "que", "quem", "qual", "quais", "como", "onde",
+            "quando", "quanto", "quantos", "esta", "estao", "foi", "ser", "sao", "tem",
+            "ter", "uma", "uns", "umas", "ate", "pode", "podem"
+    );
+
+    private static final Set<String> UBIQUITOUS_TERMS = Set.of(
+            "declarar", "declaracao", "declaracoes", "declarada", "declarado",
+            "imposto", "renda", "irpf", "tributavel", "tributaveis", "exercicio"
+    );
+
+    private static String normalizeText(String text) {
+        if (text == null) {
+            return "";
+        }
+        String nfd = java.text.Normalizer.normalize(text.toLowerCase(), java.text.Normalizer.Form.NFD);
+        return nfd.replaceAll("\\p{M}", "").replaceAll("[^a-z0-9\\s]", " ");
+    }
+
+    private static boolean matchesTermOrStem(String text, String term) {
+        if (text.contains(term)) {
+            return true;
+        }
+        if (term.length() >= 5) {
+            String stem = term.length() >= 7 ? term.substring(0, 6) : term.substring(0, term.length() - 1);
+            return text.contains(stem);
+        }
+        return false;
+    }
+
     private List<RetrievedChunk> fallbackCandidateRetrieval(String query, List<UUID> subjectIds, boolean isSemantic) {
         StringBuilder sql = new StringBuilder("""
             SELECT DISTINCT c.id, c.document_id, d.title as doc_title, c.title as chunk_title,
@@ -220,24 +251,52 @@ public class HybridSearchService {
                 0.0
         ));
 
-        // Score candidates based on term overlap and lexical relevance
-        String[] terms = query.toLowerCase().split("\\s+");
+        // Score candidates based on term overlap, title importance, and lexical relevance
+        String normalizedQuery = normalizeText(query);
+        String[] terms = normalizedQuery.split("\\s+");
         List<ScoredCandidate> scored = new ArrayList<>();
 
         for (RetrievedChunk candidate : candidates) {
-            String fullCandidateText = ((candidate.chunkTitle() != null ? candidate.chunkTitle() : "") + " " + candidate.content()).toLowerCase();
+            String normTitle = normalizeText(candidate.chunkTitle());
+            String normContent = normalizeText(candidate.content());
+            String normFull = normTitle + " " + normContent;
+
             double score = 0.0;
+            int matchedTitleTerms = 0;
+            int matchedContentTerms = 0;
+
+            if (normFull.contains(normalizedQuery)) {
+                score += 30.0;
+            }
+
             for (String term : terms) {
-                if (term.length() > 2) {
-                    if (fullCandidateText.contains(term)) {
-                        score += isSemantic ? 1.0 : 2.0;
-                    }
-                    if (candidate.chunkTitle() != null && candidate.chunkTitle().toLowerCase().contains(term)) {
-                        score += 3.0; // Higher weight for title matches
-                    }
+                if (term.length() < 2 || STOP_WORDS.contains(term)) {
+                    continue;
+                }
+
+                boolean isUbiquitous = UBIQUITOUS_TERMS.contains(term);
+                boolean isNumberOrCode = term.matches(".*\\d+.*") || (term.length() <= 4 && term.matches("[a-z0-9]+"));
+                double termWeight = isUbiquitous ? 1.0 : (isNumberOrCode ? 8.0 : 4.0);
+
+                boolean matchedInTitle = matchesTermOrStem(normTitle, term);
+                boolean matchedInContent = matchesTermOrStem(normContent, term);
+
+                if (matchedInTitle) {
+                    matchedTitleTerms++;
+                    score += termWeight * (isUbiquitous ? 1.5 : 5.0);
+                }
+                if (matchedInContent) {
+                    matchedContentTerms++;
+                    score += termWeight;
                 }
             }
-            if (score > 0.0 || !isSemantic) {
+
+            // Reject spurious matches with zero title matches and insufficient content matches
+            if (matchedTitleTerms == 0 && (matchedContentTerms < 2 && terms.length >= 3)) {
+                score = 0.0;
+            }
+
+            if (score > 0.0) {
                 scored.add(new ScoredCandidate(candidate, score));
             }
         }
