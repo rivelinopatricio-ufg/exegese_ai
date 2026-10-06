@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exegese AI — Assistente Regulatório & Tributário</title>
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        navy: { 900: '#0b1120', 950: '#070b14' }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-slate-900 text-slate-100 h-screen flex flex-col overflow-hidden">
+
+    <!-- Top Navigation Header -->
+    <header class="h-16 border-b border-slate-800 bg-slate-950 flex items-center justify-between px-6 shrink-0">
+        <div class="flex items-center gap-3">
+            <div class="w-9 h-9 rounded-lg bg-sky-600 flex items-center justify-center font-bold text-lg text-white shadow-lg shadow-sky-900/50">
+                E
+            </div>
+            <div>
+                <h1 class="text-base font-bold tracking-tight text-slate-100">Exegese AI</h1>
+                <p class="text-xs text-slate-400">RAG Regulatório com Factualidade Estrita</p>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-4 text-sm">
+            <button onclick="toggleTheme()" class="px-3 py-1.5 rounded-md border border-slate-700 bg-slate-800 hover:bg-slate-700 text-xs transition" title="Alternar tema">
+                🌓 Tema
+            </button>
+            <form th:action="@{/chat/new}" method="post">
+                <button type="submit" class="px-3 py-1.5 rounded-md bg-sky-600 hover:bg-sky-500 text-white font-medium text-xs transition shadow">
+                    + Nova Conversa
+                </button>
+            </form>
+            <div th:if="${isAdmin}" class="flex gap-2">
+                <a th:href="@{/admin/users}" class="text-slate-400 hover:text-sky-400 text-xs transition">Painel Admin</a>
+            </div>
+            <a th:href="@{/logout}" class="text-red-400 hover:text-red-300 text-xs transition">Sair</a>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <div class="flex-1 flex overflow-hidden">
+
+        <!-- Sidebar: Histórico e Filtro de Assuntos -->
+        <aside class="w-80 border-r border-slate-800 bg-slate-950 flex flex-col shrink-0">
+            <!-- Filtro de Assuntos -->
+            <div class="p-4 border-b border-slate-800">
+                <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">
+                    Assuntos Selecionados
+                </h2>
+                <div class="space-y-2 max-h-48 overflow-y-auto pr-1" id="subjects-container">
+                    <label th:each="s : ${subjects}" class="flex items-center gap-2 text-xs text-slate-300 hover:text-white cursor-pointer select-none">
+                        <input type="checkbox" name="subjectIds" th:value="${s.id}" checked
+                               class="subject-checkbox rounded bg-slate-800 border-slate-700 text-sky-600 focus:ring-0 focus:ring-offset-0">
+                        <span th:text="${s.name}" class="truncate">Tributário IRPF</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Sessões Recentes -->
+            <div class="flex-1 p-4 overflow-y-auto">
+                <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">
+                    Histórico de Sessões
+                </h2>
+                <div class="space-y-1.5">
+                    <a th:each="s : ${sessions}" 
+                       th:href="@{/chat/{id}(id=${s.id})}"
+                       th:classappend="${s.id == activeSession.id} ? 'bg-slate-800 text-sky-400 font-medium' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'"
+                       class="block px-3 py-2 rounded-lg text-xs truncate transition">
+                        💬 <span th:text="${s.title}">Conversa</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Usuário Conectado -->
+            <div class="p-4 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+                <span th:text="${currentUser.name}">Usuário</span>
+                <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]" th:text="${currentUser.role}">ROLE_USER</span>
+            </div>
+        </aside>
+
+        <!-- Chat Conversation Area -->
+        <main class="flex-1 flex flex-col bg-slate-900 overflow-hidden relative">
+
+            <!-- Balões de Mensagens -->
+            <div id="messages-container" class="flex-1 overflow-y-auto p-6 space-y-6 max-w-4xl w-full mx-auto">
+                <!-- Estado Inicial se não houver mensagens -->
+                <div th:if="${#lists.isEmpty(messages)}" id="empty-state" class="text-center py-20 text-slate-500">
+                    <div class="text-4xl mb-3">⚖️</div>
+                    <h3 class="text-lg font-semibold text-slate-300">Exegese AI — Motor RAG</h3>
+                    <p class="text-sm text-slate-400 max-w-md mx-auto mt-1">
+                        Consulte dúvidas fiscais e regulatórias com garantia de respostas estritamente ancoradas nas normas e manuais oficiais.
+                    </p>
+                </div>
+
+                <!-- Mensagens do Histórico -->
+                <div th:each="msg : ${messages}" 
+                     th:classappend="${msg.role == 'USER'} ? 'justify-end' : 'justify-start'"
+                     class="flex gap-3">
+                    <div th:classappend="${msg.role == 'USER'} ? 'bg-sky-950/80 border border-sky-800 text-sky-100' : 'bg-slate-800 border border-slate-700 text-slate-100'"
+                         class="rounded-2xl p-4 max-w-2xl text-sm shadow-md">
+                        <div class="font-semibold text-xs mb-1 opacity-70" th:text="${msg.role == 'USER' ? 'Você' : 'Exegese AI'}"></div>
+                        <div class="whitespace-pre-wrap leading-relaxed" th:text="${msg.content}">Conteúdo</div>
+                        <div th:if="${msg.citations != null and !msg.citations.isEmpty()}" class="mt-3 pt-3 border-t border-slate-700/60 flex flex-wrap gap-2">
+                            <span class="text-[10px] uppercase font-bold text-slate-400 w-full">Fontes Oficiais:</span>
+                            <!-- Renderizado via script para citações do histórico -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Formulário de Envio -->
+            <div class="p-4 border-t border-slate-800 bg-slate-950/60 backdrop-blur">
+                <form id="chat-form" class="max-w-4xl mx-auto flex gap-3">
+                    <input type="hidden" id="session-id" th:value="${activeSession.id}">
+                    <input type="text" id="question-input" required autocomplete="off"
+                           placeholder="Faça sua pergunta tributária ou jurídica (ex: Como deduzir despesas médicas no IRPF 2026?)..."
+                           class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-inner">
+                    <button type="submit" id="send-button"
+                            class="px-5 py-3 bg-sky-600 hover:bg-sky-500 text-white font-medium text-sm rounded-xl transition shadow-lg shadow-sky-950 flex items-center gap-2">
+                        <span>Enviar</span>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                        </svg>
+                    </button>
+                </form>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal de Detalhamento da Citação Canônica -->
+    <div id="citation-modal" class="hidden fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-4">
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl">
+            <div class="flex justify-between items-start mb-4">
+                <h3 class="text-base font-bold text-sky-400" id="modal-title">Fonte Canônica</h3>
+                <button onclick="closeModal()" class="text-slate-400 hover:text-white text-lg">✕</button>
+            </div>
+            <div class="space-y-3 text-sm text-slate-300">
+                <p><span class="font-semibold text-slate-400">Documento:</span> <span id="modal-doc"></span></p>
+                <p><span class="font-semibold text-slate-400">Página:</span> <span id="modal-page"></span></p>
+                <p><span class="font-semibold text-slate-400">Referência:</span> <span id="modal-ref"></span></p>
+                <div class="p-3 bg-slate-900 rounded-lg border border-slate-700 text-xs font-mono text-slate-300" id="modal-details">
+                </div>
+            </div>
+            <div class="mt-6 flex justify-end">
+                <button onclick="closeModal()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-xs font-medium">
+                    Fechar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Client-side Streaming SSE & UI Logic -->
+    <script>
+        const form = document.getElementById('chat-form');
+        const input = document.getElementById('question-input');
+        const container = document.getElementById('messages-container');
+        const sessionId = document.getElementById('session-id').value;
+        const emptyState = document.getElementById('empty-state');
+
+        function toggleTheme() {
+            document.documentElement.classList.toggle('dark');
+        }
+
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            const question = input.value.trim();
+            if (!question) return;
+
+            if (emptyState) emptyState.style.display = 'none';
+
+            // Obter assuntos marcados
+            const checkedBoxes = document.querySelectorAll('.subject-checkbox:checked');
+            const subjectIds = Array.from(checkedBoxes).map(cb => cb.value);
+
+            // 1. Renderizar bolha do usuário
+            appendMessage('USER', question);
+            input.value = '';
+
+            // 2. Criar bolha do assistente com cursor pulsante
+            const assistantBubble = appendMessage('ASSISTANT', '');
+            const contentSpan = assistantBubble.querySelector('.message-content');
+            const citationsContainer = assistantBubble.querySelector('.citations-container');
+
+            const cursor = document.createElement('span');
+            cursor.className = 'cursor-blink';
+            contentSpan.appendChild(cursor);
+
+            // 3. Montar query params para o SSE
+            let url = `/api/chat/stream?sessionId=${sessionId}&question=${encodeURIComponent(question)}`;
+            if (subjectIds.length > 0) {
+                url += `&subjectIds=${subjectIds.join(',')}`;
+            }
+
+            const eventSource = new EventSource(url);
+
+            eventSource.addEventListener('token', function (event) {
+                cursor.remove();
+                contentSpan.appendChild(document.createTextNode(event.data));
+                contentSpan.appendChild(cursor);
+                container.scrollTop = container.scrollHeight;
+            });
+
+            eventSource.addEventListener('citation', function (event) {
+                try {
+                    const citations = JSON.parse(event.data);
+                    if (citations && citations.length > 0) {
+                        citationsContainer.classList.remove('hidden');
+                        citations.forEach(cit => {
+                            const chip = document.createElement('button');
+                            chip.className = 'citation-chip';
+                            chip.textContent = `📜 ${cit.chunkTitle || cit.documentTitle}`;
+                            chip.onclick = () => openCitationModal(cit);
+                            citationsContainer.appendChild(chip);
+                        });
+                    }
+                } catch (err) {
+                    console.error('Erro ao interpretar citações:', err);
+                }
+            });
+
+            eventSource.addEventListener('complete', function () {
+                cursor.remove();
+                eventSource.close();
+            });
+
+            eventSource.onerror = function () {
+                cursor.remove();
+                eventSource.close();
+            };
+        });
+
+        function appendMessage(role, text) {
+            const wrapper = document.createElement('div');
+            wrapper.className = `flex ${role === 'USER' ? 'justify-end' : 'justify-start'} gap-3`;
+
+            const box = document.createElement('div');
+            box.className = `rounded-2xl p-4 max-w-2xl text-sm shadow-md ${
+                role === 'USER'
+                    ? 'bg-sky-950/80 border border-sky-800 text-sky-100'
+                    : 'bg-slate-800 border border-slate-700 text-slate-100'
+            }`;
+
+            const header = document.createElement('div');
+            header.className = 'font-semibold text-xs mb-1 opacity-70';
+            header.textContent = role === 'USER' ? 'Você' : 'Exegese AI';
+            box.appendChild(header);
+
+            const content = document.createElement('div');
+            content.className = 'message-content whitespace-pre-wrap leading-relaxed';
+            content.textContent = text;
+            box.appendChild(content);
+
+            if (role === 'ASSISTANT') {
+                const citBox = document.createElement('div');
+                citBox.className = 'citations-container hidden mt-3 pt-3 border-t border-slate-700/60 flex flex-wrap gap-2';
+                const citHeader = document.createElement('span');
+                citHeader.className = 'text-[10px] uppercase font-bold text-slate-400 w-full';
+                citHeader.textContent = 'Fontes Oficiais:';
+                citBox.appendChild(citHeader);
+                box.appendChild(citBox);
+            }
+
+            wrapper.appendChild(box);
+            container.appendChild(wrapper);
+            container.scrollTop = container.scrollHeight;
+            return box;
+        }
+
+        function openCitationModal(cit) {
+            document.getElementById('modal-title').textContent = cit.chunkTitle || 'Fonte Canônica';
+            document.getElementById('modal-doc').textContent = cit.documentTitle || 'Não especificado';
+            document.getElementById('modal-page').textContent = cit.pageNumber ? `Página ${cit.pageNumber}` : 'N/A';
+            document.getElementById('modal-ref').textContent = cit.questionNumber ? `Pergunta ${cit.questionNumber}` : (cit.articleNumber || 'Seção');
+            document.getElementById('modal-details').textContent = cit.legalBasis || 'Documento oficial homologado pela Receita Federal do Brasil.';
+            document.getElementById('citation-modal').classList.remove('hidden');
+        }
+
+        function closeModal() {
+            document.getElementById('citation-modal').classList.add('hidden');
+        }
+
+        window.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeModal();
+        });
+    </script>
+</body>
+</html>
