@@ -52,6 +52,8 @@ public class SecurityConfiguration {
         http
             .authorizeHttpRequests(authorize -> authorize
                 .requestMatchers("/login", "/error", "/css/**", "/js/**", "/images/**", "/actuator/health", "/favicon.ico").permitAll()
+                .requestMatchers("/admin/users/**", "/admin/models/**").hasRole("ADMIN")
+                .requestMatchers("/admin/subjects/**", "/admin/documents/**").hasAnyRole("ADMIN", "OPERATOR")
                 .requestMatchers("/admin/**").hasRole("ADMIN")
                 .anyRequest().authenticated()
             )

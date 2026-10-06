@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="pt-BR" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exegese AI — Catálogo de Documentos</title>
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+</head>
+<body class="bg-slate-900 text-slate-100 p-8">
+    <header class="flex justify-between items-center mb-8 pb-4 border-b border-slate-700">
+        <div>
+            <h1 class="text-2xl font-bold">Catálogo Geral de Documentos</h1>
+            <p class="text-slate-400 text-sm">Monitoramento do Acervo Normativo e Status de Indexação RAG</p>
+        </div>
+        <div class="flex gap-4">
+            <a th:href="@{/admin/users}" class="text-sky-400 hover:underline">Usuários</a>
+            <a th:href="@{/admin/subjects}" class="text-sky-400 hover:underline">Assuntos</a>
+            <a th:href="@{/}" class="text-slate-300 hover:underline">Chat</a>
+            <a th:href="@{/logout}" class="text-red-400 hover:underline">Sair</a>
+        </div>
+    </header>
+
+    <main class="bg-slate-800 rounded-xl p-6 shadow-xl border border-slate-700">
+        <!-- Barra de Filtros -->
+        <div class="flex flex-wrap gap-4 items-center justify-between mb-6 pb-4 border-b border-slate-700/60">
+            <form th:action="@{/admin/documents}" method="get" class="flex gap-3 items-center">
+                <select name="subjectId" class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-slate-200">
+                    <option value="">Todos os Assuntos</option>
+                    <option th:each="sub : ${subjects}" th:value="${sub.id}" th:text="${sub.name}"
+                            th:selected="${selectedSubjectId != null and selectedSubjectId == sub.id}">Assunto</option>
+                </select>
+
+                <select name="status" class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-slate-200">
+                    <option value="">Todos os Status</option>
+                    <option value="UPLOADED" th:selected="${selectedStatus == 'UPLOADED'}">UPLOADED</option>
+                    <option value="PROCESSING" th:selected="${selectedStatus == 'PROCESSING'}">PROCESSING</option>
+                    <option value="INDEXED" th:selected="${selectedStatus == 'INDEXED'}">INDEXED</option>
+                    <option value="ERROR" th:selected="${selectedStatus == 'ERROR'}">ERROR</option>
+                </select>
+
+                <button type="submit" class="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm text-slate-200">
+                    Filtrar
+                </button>
+            </form>
+        </div>
+
+        <!-- Tabela de Documentos -->
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="border-b border-slate-700 text-slate-400 text-sm">
+                        <th class="py-3 px-4">Documento</th>
+                        <th class="py-3 px-4">Assuntos Vinculados (Tags)</th>
+                        <th class="py-3 px-4">Páginas</th>
+                        <th class="py-3 px-4">Estratégia</th>
+                        <th class="py-3 px-4">Status</th>
+                        <th class="py-3 px-4">Data Envio</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:if="${#lists.isEmpty(documents)}">
+                        <td colspan="6" class="py-8 text-center text-slate-400">Nenhum documento cadastrado no catálogo.</td>
+                    </tr>
+                    <tr th:each="doc : ${documents}" class="border-b border-slate-700/50 hover:bg-slate-750">
+                        <td class="py-3 px-4">
+                            <div class="font-medium text-white" th:text="${doc.title}">Título</div>
+                            <div class="text-xs text-slate-400 font-mono" th:text="${doc.originalFileName}">arquivo.pdf</div>
+                        </td>
+                        <td class="py-3 px-4">
+                            <div class="flex flex-wrap gap-1">
+                                <span th:each="tag : ${doc.subjectNames}"
+                                      class="px-2 py-0.5 text-xs rounded bg-sky-950 border border-sky-800 text-sky-300"
+                                      th:text="${tag}">Assunto</span>
+                            </div>
+                        </td>
+                        <td class="py-3 px-4 text-sm text-slate-300" th:text="${doc.totalPages}">1</td>
+                        <td class="py-3 px-4 text-xs font-mono text-slate-400" th:text="${doc.segmentationStrategy}">STRUCTURED_QA</td>
+                        <td class="py-3 px-4">
+                            <span th:class="${doc.status == 'INDEXED' ? 'px-2 py-1 text-xs rounded bg-emerald-900/60 text-emerald-200 font-semibold' : (doc.status == 'ERROR' ? 'px-2 py-1 text-xs rounded bg-red-900/60 text-red-200 font-semibold' : 'px-2 py-1 text-xs rounded bg-amber-900/60 text-amber-200 font-semibold')}"
+                                  th:text="${doc.status}">INDEXED</span>
+                        </td>
+                        <td class="py-3 px-4 text-xs text-slate-400" th:text="${doc.createdAt}">Data</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+</body>
+</html>

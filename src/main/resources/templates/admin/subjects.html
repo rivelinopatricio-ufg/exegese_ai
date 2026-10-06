@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="pt-BR" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exegese AI — Gestão de Assuntos</title>
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+</head>
+<body class="bg-slate-900 text-slate-100 p-8">
+    <header class="flex justify-between items-center mb-8 pb-4 border-b border-slate-700">
+        <div>
+            <h1 class="text-2xl font-bold">Catálogo de Assuntos e Temas</h1>
+            <p class="text-slate-400 text-sm">Organização e Particionamento Semântico dos Acervos Documentais</p>
+        </div>
+        <div class="flex gap-4">
+            <a th:href="@{/admin/users}" class="text-sky-400 hover:underline">Usuários</a>
+            <a th:href="@{/admin/documents}" class="text-sky-400 hover:underline">Documentos</a>
+            <a th:href="@{/}" class="text-slate-300 hover:underline">Chat</a>
+            <a th:href="@{/logout}" class="text-red-400 hover:underline">Sair</a>
+        </div>
+    </header>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <!-- Formulário de Novo Assunto -->
+        <div class="bg-slate-800 rounded-xl p-6 shadow-xl border border-slate-700 h-fit">
+            <h2 class="text-lg font-semibold mb-4 text-sky-400">Novo Assunto / Categoria</h2>
+            <form th:action="@{/admin/subjects}" method="post" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">Código Identificador (Slug)</label>
+                    <input type="text" name="code" placeholder="ex: tributario-irpf" required
+                           class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-slate-100 focus:outline-none focus:border-sky-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">Nome de Exibição</label>
+                    <input type="text" name="name" placeholder="ex: Tributário - IRPF 2026" required
+                           class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-slate-100 focus:outline-none focus:border-sky-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">Descrição</label>
+                    <textarea name="description" rows="3" placeholder="Descrição temática do acervo..."
+                              class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-slate-100 focus:outline-none focus:border-sky-500"></textarea>
+                </div>
+                <button type="submit" 
+                        class="w-full py-2 bg-sky-600 hover:bg-sky-500 text-white font-medium rounded text-sm transition">
+                    Cadastrar Assunto
+                </button>
+            </form>
+        </div>
+
+        <!-- Tabela de Assuntos -->
+        <div class="lg:col-span-2 bg-slate-800 rounded-xl p-6 shadow-xl border border-slate-700">
+            <h2 class="text-lg font-semibold mb-4">Assuntos Cadastrados</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="border-b border-slate-700 text-slate-400 text-sm">
+                            <th class="py-3 px-4">Código</th>
+                            <th class="py-3 px-4">Nome</th>
+                            <th class="py-3 px-4">Status</th>
+                            <th class="py-3 px-4 text-right">Ação</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="sub : ${subjects}" class="border-b border-slate-700/50 hover:bg-slate-750">
+                            <td class="py-3 px-4 font-mono text-xs text-sky-300" th:text="${sub.code}">codigo</td>
+                            <td class="py-3 px-4">
+                                <div class="font-medium" th:text="${sub.name}">Nome</div>
+                                <div class="text-xs text-slate-400" th:text="${sub.description}">Descrição</div>
+                            </td>
+                            <td class="py-3 px-4">
+                                <span th:if="${sub.active}" class="px-2 py-1 text-xs rounded bg-emerald-900/60 text-emerald-200">Ativo</span>
+                                <span th:unless="${sub.active}" class="px-2 py-1 text-xs rounded bg-red-900/60 text-red-200">Inativo</span>
+                            </td>
+                            <td class="py-3 px-4 text-right">
+                                <form th:action="@{/admin/subjects/{id}/toggle(id=${sub.id})}" method="post">
+                                    <button type="submit" 
+                                            th:class="${sub.active ? 'px-2 py-1 bg-amber-600/80 text-white rounded text-xs hover:bg-amber-500' : 'px-2 py-1 bg-emerald-600/80 text-white rounded text-xs hover:bg-emerald-500'}"
+                                            th:text="${sub.active ? 'Desativar' : 'Ativar'}">Alternar</button>
+                                </form>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
