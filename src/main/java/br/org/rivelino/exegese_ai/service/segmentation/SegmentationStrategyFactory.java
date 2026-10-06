@@ -17,41 +17,46 @@
  *
  * This software uses third-party components, distributed accordingly to their own licenses.
  *******************************************************************************/
-package br.org.rivelino.exegese_ai.config;
+package br.org.rivelino.exegese_ai.service.segmentation;
 
-import org.springframework.ai.document.Document;
-import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.ai.embedding.EmbeddingRequest;
-import org.springframework.ai.embedding.EmbeddingResponse;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
+import br.org.rivelino.exegese_ai.domain.enums.SegmentationStrategyType;
+import org.springframework.stereotype.Component;
 
-import java.util.Collections;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 
 /**
- * Configuration for vector store and fallback embedding model.
+ * Factory resolving polymorphic document segmentation strategies by strategy type.
  *
  * @author Rivelino Patrício
  */
-@Configuration
-public class VectorStoreConfiguration {
+@Component
+public class SegmentationStrategyFactory {
 
-    @Bean
-    @org.springframework.context.annotation.Primary
-    @ConditionalOnMissingBean(EmbeddingModel.class)
-    public EmbeddingModel fallbackEmbeddingModel() {
-        return new EmbeddingModel() {
-            @Override
-            public EmbeddingResponse call(EmbeddingRequest request) {
-                return new EmbeddingResponse(Collections.emptyList());
-            }
+    private final Map<SegmentationStrategyType, SegmentationStrategy> strategies;
 
-            @Override
-            public float[] embed(Document document) {
-                return new float[768];
-            }
-        };
+    public SegmentationStrategyFactory(List<SegmentationStrategy> strategyList) {
+        this.strategies = new EnumMap<>(SegmentationStrategyType.class);
+        for (SegmentationStrategy strategy : strategyList) {
+            this.strategies.put(strategy.getType(), strategy);
+        }
+    }
+
+    /**
+     * Resolves the segmentation strategy matching the given type, falling back to RECURSIVE.
+     *
+     * @param type the desired segmentation strategy type
+     * @return the matching segmentation strategy
+     */
+    public SegmentationStrategy getStrategy(SegmentationStrategyType type) {
+        if (type == null) {
+            return strategies.get(SegmentationStrategyType.RECURSIVE);
+        }
+        SegmentationStrategy strategy = strategies.get(type);
+        if (strategy == null) {
+            return strategies.get(SegmentationStrategyType.RECURSIVE);
+        }
+        return strategy;
     }
 }

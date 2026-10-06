@@ -17,41 +17,22 @@
  *
  * This software uses third-party components, distributed accordingly to their own licenses.
  *******************************************************************************/
-package br.org.rivelino.exegese_ai.config;
+package br.org.rivelino.exegese_ai.service.segmentation;
 
-import org.springframework.ai.document.Document;
-import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.ai.embedding.EmbeddingRequest;
-import org.springframework.ai.embedding.EmbeddingResponse;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
+import br.org.rivelino.exegese_ai.domain.dto.RawChunk;
+import br.org.rivelino.exegese_ai.domain.enums.SegmentationStrategyType;
 
-import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 /**
- * Configuration for vector store and fallback embedding model.
+ * Strategy interface defining polymorphic chunking of extracted document text.
  *
  * @author Rivelino Patrício
  */
-@Configuration
-public class VectorStoreConfiguration {
+public interface SegmentationStrategy {
 
-    @Bean
-    @org.springframework.context.annotation.Primary
-    @ConditionalOnMissingBean(EmbeddingModel.class)
-    public EmbeddingModel fallbackEmbeddingModel() {
-        return new EmbeddingModel() {
-            @Override
-            public EmbeddingResponse call(EmbeddingRequest request) {
-                return new EmbeddingResponse(Collections.emptyList());
-            }
+    SegmentationStrategyType getType();
 
-            @Override
-            public float[] embed(Document document) {
-                return new float[768];
-            }
-        };
-    }
+    List<RawChunk> segment(String fullText, Map<Integer, String> pageMap);
 }
