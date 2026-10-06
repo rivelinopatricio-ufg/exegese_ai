@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="pt-BR" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exegese AI — Ecossistemas de Modelos de IA</title>
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+</head>
+<body class="bg-slate-900 text-slate-100 p-8">
+    <header class="flex justify-between items-center mb-8 pb-4 border-b border-slate-700">
+        <div>
+            <h1 class="text-2xl font-bold">Roteamento Multi-Provedor de IA</h1>
+            <p class="text-slate-400 text-sm">Gestão de Ecossistemas de Inferência, Credenciais Criptografadas e Modelo Ativo</p>
+        </div>
+        <div class="flex gap-4">
+            <a th:href="@{/admin/users}" class="text-sky-400 hover:underline">Usuários</a>
+            <a th:href="@{/admin/subjects}" class="text-sky-400 hover:underline">Assuntos</a>
+            <a th:href="@{/admin/documents}" class="text-sky-400 hover:underline">Documentos</a>
+            <a th:href="@{/admin/models}" class="text-sky-300 font-semibold underline">Modelos IA</a>
+            <a th:href="@{/}" class="text-slate-300 hover:underline">Chat</a>
+            <a th:href="@{/logout}" class="text-red-400 hover:underline">Sair</a>
+        </div>
+    </header>
+
+    <!-- Feedback Alerts -->
+    <div th:if="${saved}" class="mb-6 p-4 bg-emerald-950 border border-emerald-800 text-emerald-300 rounded-lg text-sm">
+        Configurações do modelo atualizadas com sucesso! Chave de API protegida com AES-256-GCM.
+    </div>
+    <div th:if="${switched}" class="mb-6 p-4 bg-sky-950 border border-sky-800 text-sky-300 rounded-lg text-sm">
+        Provedor padrão do sistema alterado com sucesso!
+    </div>
+    <div th:if="${pingResult}" class="mb-6 p-4 bg-indigo-950 border border-indigo-800 text-indigo-300 rounded-lg text-sm">
+        <span class="font-semibold">Resultado do Teste:</span> <span th:text="${pingResult}"></span>
+    </div>
+
+    <!-- Grid dos 6 Provedores -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div th:each="m : ${models}" class="bg-slate-800 rounded-xl p-6 shadow-xl border border-slate-700 flex flex-col justify-between">
+            <div>
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <h2 class="text-lg font-bold text-slate-100" th:text="${m.displayName}">Google Gemini</h2>
+                        <span class="text-xs font-mono text-slate-400" th:text="${m.provider}">GEMINI</span>
+                    </div>
+                    <div>
+                        <span th:if="${m.isDefault}" class="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-900 text-emerald-300 border border-emerald-700">
+                            PADRÃO ATIVO
+                        </span>
+                        <span th:unless="${m.isDefault}" class="px-2.5 py-1 text-xs font-medium rounded-full bg-slate-700 text-slate-400">
+                            Secundário
+                        </span>
+                    </div>
+                </div>
+
+                <form th:action="@{/admin/models/{p}/save(p=${m.provider})}" method="post" class="space-y-3 mb-4">
+                    <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1">Nome de Exibição</label>
+                        <input type="text" name="displayName" th:value="${m.displayName}" required
+                               class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-100 focus:outline-none focus:border-sky-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1">Identificador do Modelo</label>
+                        <input type="text" name="modelName" th:value="${m.modelName}" required
+                               class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-100 focus:outline-none focus:border-sky-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1">Endpoint Base (URL)</label>
+                        <input type="text" name="baseUrl" th:value="${m.baseUrl}"
+                               class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-100 focus:outline-none focus:border-sky-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1">
+                            Chave de API (AES-256)
+                            <span th:if="${m.hasApiKey}" class="text-emerald-400 font-semibold ml-1">✓ Configurada</span>
+                            <span th:unless="${m.hasApiKey}" class="text-amber-400 font-semibold ml-1">⚠ Não definida</span>
+                        </label>
+                        <input type="password" name="apiKey" placeholder="Insira nova chave para atualizar"
+                               class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-100 focus:outline-none focus:border-sky-500">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-xs font-medium text-slate-400 mb-1">Temperatura</label>
+                            <input type="number" step="0.01" min="0" max="1" name="temperature" th:value="${m.temperature}"
+                                   class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-100 focus:outline-none focus:border-sky-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-slate-400 mb-1">Max Tokens</label>
+                            <input type="number" name="maxTokens" th:value="${m.maxTokens}"
+                                   class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-100 focus:outline-none focus:border-sky-500">
+                        </div>
+                    </div>
+                    <button type="submit" class="w-full py-1.5 bg-sky-700 hover:bg-sky-600 text-white font-medium rounded text-xs transition">
+                        Salvar Configurações
+                    </button>
+                </form>
+            </div>
+
+            <!-- Ações Rápidas: Tornar Padrão & Ping -->
+            <div class="pt-3 border-t border-slate-700 flex gap-2">
+                <form th:unless="${m.isDefault}" th:action="@{/admin/models/{p}/set-default(p=${m.provider})}" method="post" class="flex-1">
+                    <button type="submit" class="w-full py-1.5 bg-slate-700 hover:bg-emerald-700 text-slate-200 hover:text-white rounded text-xs transition">
+                        Definir como Padrão
+                    </button>
+                </form>
+                <form th:action="@{/admin/models/{p}/ping(p=${m.provider})}" method="post" class="flex-1">
+                    <button type="submit" class="w-full py-1.5 bg-slate-700 hover:bg-indigo-700 text-slate-200 hover:text-white rounded text-xs transition">
+                        Testar Ping
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

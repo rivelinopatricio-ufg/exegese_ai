@@ -140,7 +140,8 @@ class EntityPersistenceIntegrationTest {
     @Test
     @DisplayName("Persist AiModelConfig and ChatSession with Messages")
     void testAiModelAndChatPersistence() {
-        AiModelConfig config = new AiModelConfig(ModelProvider.GEMINI, "Google Gemini 2.5 Flash", "gemini-2.5-flash");
+        AiModelConfig config = modelConfigRepository.findByProvider(ModelProvider.GEMINI)
+                .orElseGet(() -> new AiModelConfig(ModelProvider.GEMINI, "Google Gemini 2.5 Flash", "gemini-2.5-flash"));
         config.setActive(true);
         config.setDefault(true);
         AiModelConfig savedConfig = modelConfigRepository.save(config);
