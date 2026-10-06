@@ -59,7 +59,18 @@ exegese:
   default-llm-provider: GEMINI
   similarity-threshold: 0.65
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
 logging:
   level:
     root: INFO
     br.org.rivelino.exegese_ai: DEBUG
+
