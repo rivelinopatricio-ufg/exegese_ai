@@ -1,0 +1,42 @@
+﻿graph TD
+    App["Aplicação Exegese AI (Layout Principal)"]
+    
+    App --> Header["Header Institucional"]
+    Header --> Brand["Identidade Visual & Logo"]
+    Header --> UserNav["Menu do Usuário (Google Avatar)"]
+    Header --> ThemeToggle["Toggle Modo Claro / Escuro"]
+    Header --> AdminLink["Link Painel Administrativo (ROLE_ADMIN)"]
+    
+    App --> MainView{"Visão Ativa"}
+    
+    MainView -->|Rota /| ChatView["Interface Conversacional"]
+    ChatView --> SubjectBar["Barra de Assuntos (Filtros N:N)"]
+    SubjectBar --> SubjectChips["Chips Selecionáveis [Tributário, IRPF, etc.]"]
+    
+    ChatView --> ChatThread["Thread de Mensagens (Scrollable)"]
+    ChatThread --> WelcomeCard["Card Boas-Vindas Institucional"]
+    ChatThread --> UserBubble["Balão do Usuário (Direita)"]
+    ChatThread --> AssistantBubble["Balão Exegese AI (Esquerda)"]
+    
+    AssistantBubble --> ModelBadge["Badge do Modelo Ativo (ex. Claude 3.7 / Gemini 2.5)"]
+    AssistantBubble --> StreamText["Texto em Streaming (Cursor Pulsante)"]
+    AssistantBubble --> CitationSection["Seção de Citações Canônicas"]
+    CitationSection --> CitationChips["Chips Clicáveis [Perg. NNN - Pág. XX]"]
+    
+    ChatView --> InputFooter["Barra Inferior de Entrada"]
+    InputFooter --> ChatInput["Input de Pergunta (com sanitização)"]
+    InputFooter --> SendBtn["Botão Enviar (Gatilho SSE)"]
+    InputFooter --> DisclaimerText["Aviso de Grounding e Fonte Oficial"]
+    
+    CitationChips --> Modal["Modal / Drawer Exegético"]
+    Modal --> ModalHeader["Título da Pergunta & Capítulo"]
+    Modal --> ModalBody["Texto Integral do Trecho Oficial"]
+    Modal --> ModalLegal["Fundamentação Legal (Leis, Decretos, INs)"]
+    Modal --> ModalClose["Botão Fechar / Ação ESC"]
+    
+    MainView -->|Rota /admin/*| AdminView["Painel de Controle Administrativo"]
+    AdminView --> AdminTabs["Navegação por Módulos"]
+    AdminTabs --> TabDocs["Manutenção de Documentos"]
+    AdminTabs --> TabSubjects["Gestão de Assuntos"]
+    AdminTabs --> TabUsers["Gestão de Usuários & Permissões RBAC"]
+    AdminTabs --> TabModels["Configuração dos 6 Provedores de IA"]
