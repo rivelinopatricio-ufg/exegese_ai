@@ -19,6 +19,8 @@
  *******************************************************************************/
 package br.org.rivelino.exegese_ai.config;
 
+import java.util.Collections;
+
 import org.springframework.ai.document.Document;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.embedding.EmbeddingRequest;
@@ -26,9 +28,6 @@ import org.springframework.ai.embedding.EmbeddingResponse;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import java.util.Collections;
-import java.util.List;
 
 /**
  * Configuration for vector store and fallback embedding model.
@@ -40,8 +39,7 @@ public class VectorStoreConfiguration {
 
     @Bean
     @org.springframework.context.annotation.Primary
-    @ConditionalOnMissingBean(EmbeddingModel.class)
-    public EmbeddingModel fallbackEmbeddingModel() {
+    @ConditionalOnMissingBean(EmbeddingModel.class) EmbeddingModel fallbackEmbeddingModel() {
         return new EmbeddingModel() {
             @Override
             public EmbeddingResponse call(EmbeddingRequest request) {

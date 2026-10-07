@@ -67,6 +67,7 @@ public class LlmProviderRouter {
         initProvider(ModelProvider.NEMOTRON, "NVIDIA Nemotron", "nvidia/nemotron-4-340b-instruct", "https://integrate.api.nvidia.com/v1", false);
         initProvider(ModelProvider.DEEPSEEK, "DeepSeek AI", "deepseek-chat", "https://api.deepseek.com/v1", false);
         initProvider(ModelProvider.OLLAMA_LOCAL, "Ollama Local", "qwen2.5:7b", "http://localhost:11434", false);
+        initProvider(ModelProvider.CEREBRAS, "Cerebras Inference", "gpt-oss-120b", "https://api.cerebras.ai/v1", false);
     }
 
     private void initProvider(ModelProvider provider, String displayName, String modelName, String baseUrl, boolean isDefault) {
@@ -155,6 +156,7 @@ public class LlmProviderRouter {
             case NEMOTRON -> environment.getProperty("NVIDIA_API_KEY");
             case DEEPSEEK -> environment.getProperty("DEEPSEEK_API_KEY");
             case OLLAMA_LOCAL -> "";
+            case CEREBRAS -> environment.getProperty("CEREBRAS_API_KEY");
         };
 
         return envKey != null ? envKey : "";

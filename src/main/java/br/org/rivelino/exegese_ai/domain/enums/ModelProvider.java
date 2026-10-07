@@ -30,5 +30,7 @@ public enum ModelProvider {
     OPENAI,
     NEMOTRON,
     DEEPSEEK,
-    OLLAMA_LOCAL
+    OLLAMA_LOCAL,
+    CEREBRAS
 }
+

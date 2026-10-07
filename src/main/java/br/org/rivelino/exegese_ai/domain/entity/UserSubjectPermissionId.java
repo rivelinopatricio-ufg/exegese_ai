@@ -33,7 +33,9 @@ import java.util.UUID;
 @Embeddable
 public class UserSubjectPermissionId implements Serializable {
 
-    @Column(name = "user_id")
+    private static final long serialVersionUID = 1L;
+
+	@Column(name = "user_id")
     private UUID userId;
 
     @Column(name = "subject_id")

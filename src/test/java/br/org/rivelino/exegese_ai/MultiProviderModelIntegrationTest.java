@@ -65,10 +65,10 @@ class MultiProviderModelIntegrationTest {
     private AiModelConfigRepository modelConfigRepository;
 
     @Test
-    @DisplayName("All 6 AI model provider ecosystems are bootstrapped on startup")
-    void testBootstrapOfAllSixProviders() {
+    @DisplayName("All 7 AI model provider ecosystems are bootstrapped on startup")
+    void testBootstrapOfAllSevenProviders() {
         List<AiModelConfig> all = modelConfigRepository.findAll();
-        assertThat(all).hasSize(6);
+        assertThat(all).hasSize(7);
 
         assertThat(modelConfigRepository.findByProvider(ModelProvider.GEMINI)).isPresent();
         assertThat(modelConfigRepository.findByProvider(ModelProvider.CLAUDE)).isPresent();
@@ -76,6 +76,7 @@ class MultiProviderModelIntegrationTest {
         assertThat(modelConfigRepository.findByProvider(ModelProvider.NEMOTRON)).isPresent();
         assertThat(modelConfigRepository.findByProvider(ModelProvider.DEEPSEEK)).isPresent();
         assertThat(modelConfigRepository.findByProvider(ModelProvider.OLLAMA_LOCAL)).isPresent();
+        assertThat(modelConfigRepository.findByProvider(ModelProvider.CEREBRAS)).isPresent();
 
         Optional<AiModelConfig> defaultModel = modelConfigRepository.findByIsDefaultTrue();
         assertThat(defaultModel).isPresent();
@@ -105,6 +106,29 @@ class MultiProviderModelIntegrationTest {
     }
 
     @Test
+    @DisplayName("Cerebras API Key is encrypted with AES-256 and decrypted on retrieval")
+    void testCerebrasApiKeyEncryptionAndDecryption() {
+        String cerebrasKey = "csk-test-secret-key-98765";
+
+        providerRouter.updateConfig(
+                ModelProvider.CEREBRAS,
+                "Cerebras Inference",
+                "gpt-oss-120b",
+                "https://api.cerebras.ai/v1",
+                cerebrasKey,
+                new BigDecimal("0.10"),
+                2048
+        );
+
+        AiModelConfig config = modelConfigRepository.findByProvider(ModelProvider.CEREBRAS).orElseThrow();
+        assertThat(config.getApiKeyEncrypted()).isNotNull();
+        assertThat(config.getApiKeyEncrypted()).isNotEqualTo(cerebrasKey);
+
+        String decryptedKey = providerRouter.resolveApiKey(ModelProvider.CEREBRAS);
+        assertThat(decryptedKey).isEqualTo(cerebrasKey);
+    }
+
+    @Test
     @DisplayName("Admin dynamically switches default active AI model provider")
     void testSwitchDefaultProvider() {
         providerRouter.setDefaultProvider(ModelProvider.OPENAI);
@@ -114,6 +138,11 @@ class MultiProviderModelIntegrationTest {
 
         AiModelConfig gemini = modelConfigRepository.findByProvider(ModelProvider.GEMINI).orElseThrow();
         assertThat(gemini.isDefault()).isFalse();
+
+        // Switch to Cerebras
+        providerRouter.setDefaultProvider(ModelProvider.CEREBRAS);
+        AiModelConfig cerebrasModel = providerRouter.getDefaultProvider();
+        assertThat(cerebrasModel.getProvider()).isEqualTo(ModelProvider.CEREBRAS);
     }
 
     @Test
@@ -124,6 +153,10 @@ class MultiProviderModelIntegrationTest {
                 .andExpect(status().isOk());
 
         mockMvc.perform(post("/admin/models/OLLAMA_LOCAL/ping")
+                        .with(csrf()))
+                .andExpect(status().is3xxRedirection());
+
+        mockMvc.perform(post("/admin/models/CEREBRAS/ping")
                         .with(csrf()))
                 .andExpect(status().is3xxRedirection());
     }
