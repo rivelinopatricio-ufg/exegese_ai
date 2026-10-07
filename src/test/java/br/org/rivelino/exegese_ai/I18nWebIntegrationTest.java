@@ -19,7 +19,9 @@
  *******************************************************************************/
 package br.org.rivelino.exegese_ai;
 
+import br.org.rivelino.exegese_ai.service.RagOrchestrationService;
 import jakarta.servlet.http.Cookie;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +30,9 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.Locale;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -48,6 +53,14 @@ class I18nWebIntegrationTest {
     @Autowired
     private MockMvc mockMvc;
 
+    @Autowired
+    private RagOrchestrationService ragOrchestrationService;
+
+    @AfterEach
+    void resetLocalePrompt() {
+        ragOrchestrationService.configureSystemPromptForLocale(Locale.of("pt", "BR"));
+    }
+
     @Test
     @DisplayName("Default locale is Portuguese (pt-BR) when accessing login without language parameter")
     void testDefaultLocaleIsPortuguese() throws Exception {
@@ -67,6 +80,10 @@ class I18nWebIntegrationTest {
                 .andExpect(content().string(containsString("Sign in with Google")))
                 .andExpect(content().string(containsString("Institutional Access")))
                 .andExpect(content().string(containsString("RAG Platform with Exegetical Rigor")));
+
+        assertThat(RagOrchestrationService.SPECIALIST_SYSTEM_PROMPT)
+                .contains("ZERO HALLUCINATION")
+                .contains("STEP-BY-STEP PRACTICAL GUIDANCE");
     }
 
     @Test
@@ -78,6 +95,10 @@ class I18nWebIntegrationTest {
                 .andExpect(content().string(containsString("Iniciar sesión con Google")))
                 .andExpect(content().string(containsString("Acceso Institucional")))
                 .andExpect(content().string(containsString("Plataforma RAG de Rigor Exegético y Fundamentación Normativa")));
+
+        assertThat(RagOrchestrationService.SPECIALIST_SYSTEM_PROMPT)
+                .contains("CERO ALUCINACIÓN")
+                .contains("ORIENTACIÓN PRÁTICA PASO A PASO");
     }
 
     @Test

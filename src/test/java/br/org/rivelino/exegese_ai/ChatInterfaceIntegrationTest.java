@@ -19,9 +19,11 @@
  *******************************************************************************/
 package br.org.rivelino.exegese_ai;
 
+import br.org.rivelino.exegese_ai.domain.entity.ChatMessage;
 import br.org.rivelino.exegese_ai.domain.entity.ChatSession;
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseUser;
 import br.org.rivelino.exegese_ai.domain.enums.UserRole;
+import br.org.rivelino.exegese_ai.repository.ChatMessageRepository;
 import br.org.rivelino.exegese_ai.repository.ChatSessionRepository;
 import br.org.rivelino.exegese_ai.repository.ExegeseUserRepository;
 import org.junit.jupiter.api.DisplayName;
@@ -29,17 +31,23 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.model;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrlPattern;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.view;
 
 /**
  * Integration tests for the conversational chat interface and SSE streaming endpoint.
@@ -60,6 +68,9 @@ class ChatInterfaceIntegrationTest {
 
     @Autowired
     private ChatSessionRepository sessionRepository;
+
+    @Autowired
+    private ChatMessageRepository messageRepository;
 
     @Test
     @WithMockUser(username = "chat.user@exegese.ai", roles = "USER")
@@ -108,5 +119,91 @@ class ChatInterfaceIntegrationTest {
         mockMvc.perform(get("/"))
                 .andExpect(status().is3xxRedirection())
                 .andExpect(redirectedUrl("/login"));
+    }
+
+    @Test
+    @WithMockUser(username = "rename.user@exegese.ai", roles = "USER")
+    @DisplayName("User renames their own chat session successfully")
+    void testRenameChatSession() throws Exception {
+        ExegeseUser user = userRepository.save(new ExegeseUser("rename.user@exegese.ai", "Rename User", UserRole.ROLE_USER));
+        ChatSession session = sessionRepository.save(new ChatSession(user, "Consulta Original"));
+
+        mockMvc.perform(post("/chat/" + session.getId() + "/rename")
+                        .with(csrf())
+                        .param("title", "IRPF 2026 - Dedução Carnê-Leão"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/chat/" + session.getId()));
+
+        ChatSession updated = sessionRepository.findById(session.getId()).orElseThrow();
+        assertThat(updated.getTitle()).isEqualTo("IRPF 2026 - Dedução Carnê-Leão");
+    }
+
+    @Test
+    @WithMockUser(username = "delete.user@exegese.ai", roles = "USER")
+    @DisplayName("User deletes their chat session and associated messages successfully")
+    void testDeleteChatSession() throws Exception {
+        ExegeseUser user = userRepository.save(new ExegeseUser("delete.user@exegese.ai", "Delete User", UserRole.ROLE_USER));
+        ChatSession session = sessionRepository.save(new ChatSession(user, "Consulta a Deletar"));
+        messageRepository.save(new ChatMessage(session, "USER", "Mensagem de teste"));
+
+        mockMvc.perform(post("/chat/" + session.getId() + "/delete")
+                        .with(csrf()))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/"));
+
+        assertThat(sessionRepository.findById(session.getId())).isEmpty();
+        assertThat(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId())).isEmpty();
+    }
+
+    @Test
+    @WithMockUser(username = "attacker.rename@exegese.ai", roles = "USER")
+    @DisplayName("User cannot rename another user's chat session")
+    void testCannotRenameOtherUserChatSession() throws Exception {
+        ExegeseUser victim = userRepository.save(new ExegeseUser("victim.rename@exegese.ai", "Victim", UserRole.ROLE_USER));
+        userRepository.save(new ExegeseUser("attacker.rename@exegese.ai", "Attacker", UserRole.ROLE_USER));
+        ChatSession session = sessionRepository.save(new ChatSession(victim, "Título Legítimo"));
+
+        mockMvc.perform(post("/chat/" + session.getId() + "/rename")
+                        .with(csrf())
+                        .param("title", "Título Hackeado"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/chat/" + session.getId()));
+
+        ChatSession unchanged = sessionRepository.findById(session.getId()).orElseThrow();
+        assertThat(unchanged.getTitle()).isEqualTo("Título Legítimo");
+    }
+
+    @Test
+    @WithMockUser(username = "attacker.delete@exegese.ai", roles = "USER")
+    @DisplayName("User cannot delete another user's chat session")
+    void testCannotDeleteOtherUserChatSession() throws Exception {
+        ExegeseUser victim = userRepository.save(new ExegeseUser("victim.del@exegese.ai", "Victim Del", UserRole.ROLE_USER));
+        userRepository.save(new ExegeseUser("attacker.delete@exegese.ai", "Attacker Del", UserRole.ROLE_USER));
+        ChatSession session = sessionRepository.save(new ChatSession(victim, "Consulta Protegida"));
+
+        mockMvc.perform(post("/chat/" + session.getId() + "/delete")
+                        .with(csrf()))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/"));
+
+        assertThat(sessionRepository.findById(session.getId())).isPresent();
+    }
+
+    @Test
+    @WithMockUser(username = "citations.user@exegese.ai", roles = "USER")
+    @DisplayName("Historical messages with citations render official sources chips and data attributes")
+    void testHistoricalCitationsRendered() throws Exception {
+        ExegeseUser user = userRepository.save(new ExegeseUser("citations.user@exegese.ai", "Citations User", UserRole.ROLE_USER));
+        ChatSession session = sessionRepository.save(new ChatSession(user, "Consulta com Citações"));
+
+        ChatMessage assistantMsg = new ChatMessage(session, "ASSISTANT", "Resposta ancorada com fundamentação.");
+        assistantMsg.setCitations("[{\"documentTitle\":\"Manual IRPF 2026\",\"chunkTitle\":\"Pergunta 101 - Despesas\",\"pageNumber\":55,\"questionNumber\":101,\"articleNumber\":null,\"legalBasis\":\"Lei 7.713/1988\"}]");
+        messageRepository.save(assistantMsg);
+
+        mockMvc.perform(get("/chat/" + session.getId()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("citation-chip")))
+                .andExpect(content().string(containsString("Pergunta 101 - Despesas")))
+                .andExpect(content().string(containsString("data-page=\"55\"")));
     }
 }

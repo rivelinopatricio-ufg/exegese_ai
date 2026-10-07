@@ -21,7 +21,6 @@ package br.org.rivelino.exegese_ai.repository;
 
 import br.org.rivelino.exegese_ai.domain.entity.ChatSession;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.UUID;
@@ -31,7 +30,6 @@ import java.util.UUID;
  *
  * @author Rivelino Patrício
  */
-@Repository
 public interface ChatSessionRepository extends JpaRepository<ChatSession, UUID> {
 
     List<ChatSession> findByUserIdOrderByUpdatedAtDesc(UUID userId);

@@ -22,7 +22,6 @@ package br.org.rivelino.exegese_ai.repository;
 import br.org.rivelino.exegese_ai.domain.entity.AiModelConfig;
 import br.org.rivelino.exegese_ai.domain.enums.ModelProvider;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.stereotype.Repository;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -32,7 +31,6 @@ import java.util.UUID;
  *
  * @author Rivelino Patrício
  */
-@Repository
 public interface AiModelConfigRepository extends JpaRepository<AiModelConfig, UUID> {
 
     Optional<AiModelConfig> findByProvider(ModelProvider provider);

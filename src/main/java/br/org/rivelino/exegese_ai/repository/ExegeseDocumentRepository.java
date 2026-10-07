@@ -23,7 +23,6 @@ import br.org.rivelino.exegese_ai.domain.entity.ExegeseDocument;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
-import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
@@ -34,7 +33,6 @@ import java.util.UUID;
  *
  * @author Rivelino Patrício
  */
-@Repository
 public interface ExegeseDocumentRepository extends JpaRepository<ExegeseDocument, UUID> {
 
     Optional<ExegeseDocument> findByFileHashSha256(String fileHashSha256);

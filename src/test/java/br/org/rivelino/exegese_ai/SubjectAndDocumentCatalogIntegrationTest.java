@@ -39,6 +39,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
+import jakarta.servlet.http.Cookie;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Optional;
@@ -48,6 +49,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -157,6 +159,64 @@ class SubjectAndDocumentCatalogIntegrationTest {
 
         assertThat(found).isPresent();
         assertThat(found.get().getStatus()).isEqualTo("INDEXED");
+    }
+
+    @Test
+    @WithMockUser(roles = "OPERATOR")
+    @DisplayName("Upload messages respect the requested locale via EXEGESE_LOCALE cookie (pt-BR, en, es)")
+    void testUploadMessagesRespectSelectedLocale() throws Exception {
+        MockMultipartFile emptyFile = new MockMultipartFile(
+            "file",
+            "empty.pdf",
+            "application/pdf",
+            new byte[0]
+        );
+
+        // English (cookie set before login)
+        mockMvc.perform(multipart("/admin/documents/upload")
+                .file(emptyFile)
+                .cookie(new Cookie("EXEGESE_LOCALE", "en"))
+                .with(csrf()))
+            .andExpect(status().is3xxRedirection())
+            .andExpect(flash().attribute("errorMessage", "Please select a valid PDF file for upload."));
+
+        // Spanish (cookie set before login)
+        mockMvc.perform(multipart("/admin/documents/upload")
+                .file(emptyFile)
+                .cookie(new Cookie("EXEGESE_LOCALE", "es"))
+                .with(csrf()))
+            .andExpect(status().is3xxRedirection())
+            .andExpect(flash().attribute("errorMessage", "Seleccione un archivo PDF válido para cargar."));
+
+        // Portuguese (pt_BR)
+        mockMvc.perform(multipart("/admin/documents/upload")
+                .file(emptyFile)
+                .cookie(new Cookie("EXEGESE_LOCALE", "pt_BR"))
+                .with(csrf()))
+            .andExpect(status().is3xxRedirection())
+            .andExpect(flash().attribute("errorMessage", "Selecione um arquivo PDF válido para upload."));
+    }
+
+    @Test
+    @WithMockUser(roles = "OPERATOR")
+    @DisplayName("Language cannot be changed after login via ?lang= parameter")
+    void testPostLoginLanguageChangeBlocked() throws Exception {
+        MockMultipartFile emptyFile = new MockMultipartFile(
+            "file",
+            "empty.pdf",
+            "application/pdf",
+            new byte[0]
+        );
+
+        // Authenticated user with English cookie tries to alter language to Spanish via ?lang=es
+        // The ?lang= parameter must be ignored post-login, retaining English
+        mockMvc.perform(multipart("/admin/documents/upload")
+                .file(emptyFile)
+                .param("lang", "es")
+                .cookie(new Cookie("EXEGESE_LOCALE", "en"))
+                .with(csrf()))
+            .andExpect(status().is3xxRedirection())
+            .andExpect(flash().attribute("errorMessage", "Please select a valid PDF file for upload."));
     }
 
     private byte[] createSamplePdf(String text) throws IOException {

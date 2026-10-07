@@ -26,6 +26,7 @@ import br.org.rivelino.exegese_ai.service.AntiHallucinationGuard;
 import br.org.rivelino.exegese_ai.service.QueryRewritingService;
 import br.org.rivelino.exegese_ai.service.RagOrchestrationService;
 import jakarta.persistence.EntityManager;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,6 +37,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -75,6 +77,11 @@ class RagOrchestrationIntegrationTest {
 
     @Autowired
     private EntityManager entityManager;
+
+    @BeforeEach
+    void setUpLocale() {
+        ragService.configureSystemPromptForLocale(Locale.of("pt", "BR"));
+    }
 
     @Test
     @DisplayName("Zero Hallucination Guard emits canonical refusal when context is absent")
@@ -146,7 +153,8 @@ class RagOrchestrationIntegrationTest {
         List<ChatMessage> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId());
         assertThat(messages).hasSize(2);
         assertThat(messages.get(1).getRole()).isEqualTo("ASSISTANT");
-        assertThat(messages.get(1).getContent()).contains("Previdência Social são isentos");
+        assertThat(messages.get(1).getContent()).contains("Previdência Social");
+        assertThat(messages.get(1).getContent()).contains("1.903,98");
         assertThat(messages.get(1).getCitations()).contains("Pergunta 020");
     }
 
@@ -164,6 +172,38 @@ class RagOrchestrationIntegrationTest {
         String rewritten = queryRewritingService.rewriteQuery("E no caso de pessoa jurídica?", history);
         assertThat(rewritten).contains("rendimentos de aluguel");
         assertThat(rewritten).contains("E no caso de pessoa jurídica?");
+    }
+
+    @Test
+    @DisplayName("Specialist System Prompt enforces practical guidance and zero hallucination")
+    void testSpecialistSystemPromptContent() {
+        String prompt = RagOrchestrationService.SPECIALIST_SYSTEM_PROMPT;
+        assertThat(prompt).isNotBlank();
+        assertThat(prompt).contains("ZERO ALUCINAÇÃO");
+        assertThat(prompt).contains("ORIENTAÇÃO PRÁTICA PASSO A PASSO");
+        assertThat(prompt).contains("RESPOSTA DIRETA & CONCLUSIVA");
+    }
+
+    @Test
+    @DisplayName("Specialist System Prompt reconfigures dynamically according to selected locale")
+    void testSpecialistSystemPromptLocaleReconfiguration() {
+        // Switch to English
+        ragService.configureSystemPromptForLocale(Locale.ENGLISH);
+        assertThat(RagOrchestrationService.SPECIALIST_SYSTEM_PROMPT)
+                .contains("ZERO HALLUCINATION")
+                .contains("STEP-BY-STEP PRACTICAL GUIDANCE");
+
+        // Switch to Spanish
+        ragService.configureSystemPromptForLocale(Locale.of("es"));
+        assertThat(RagOrchestrationService.SPECIALIST_SYSTEM_PROMPT)
+                .contains("CERO ALUCINACIÓN")
+                .contains("ORIENTACIÓN PRÁTICA PASO A PASO");
+
+        // Reset to Portuguese
+        ragService.configureSystemPromptForLocale(Locale.of("pt", "BR"));
+        assertThat(RagOrchestrationService.SPECIALIST_SYSTEM_PROMPT)
+                .contains("ZERO ALUCINAÇÃO")
+                .contains("ORIENTAÇÃO PRÁTICA PASSO A PASSO");
     }
 
     private static class TestSseEmitter extends SseEmitter {

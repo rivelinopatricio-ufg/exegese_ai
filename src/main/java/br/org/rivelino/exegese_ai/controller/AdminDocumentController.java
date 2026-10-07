@@ -24,18 +24,23 @@ import br.org.rivelino.exegese_ai.domain.entity.ExegeseSubject;
 import br.org.rivelino.exegese_ai.domain.enums.SegmentationStrategyType;
 import br.org.rivelino.exegese_ai.service.DocumentIngestionService;
 import br.org.rivelino.exegese_ai.service.SubjectCatalogService;
+import org.springframework.context.MessageSource;
+import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -50,11 +55,14 @@ public class AdminDocumentController {
 
     private final SubjectCatalogService catalogService;
     private final DocumentIngestionService ingestionService;
+    private final MessageSource messageSource;
 
     public AdminDocumentController(SubjectCatalogService catalogService,
-                                   DocumentIngestionService ingestionService) {
+                                   DocumentIngestionService ingestionService,
+                                   MessageSource messageSource) {
         this.catalogService = catalogService;
         this.ingestionService = ingestionService;
+        this.messageSource = messageSource;
     }
 
     @GetMapping
@@ -77,20 +85,36 @@ public class AdminDocumentController {
                                  @RequestParam(value = "title", required = false) String title,
                                  @RequestParam(value = "subjectIds", required = false) List<UUID> subjectIds,
                                  @RequestParam(value = "strategy", defaultValue = "RECURSIVE") SegmentationStrategyType strategy,
+                                 Locale locale,
                                  RedirectAttributes redirectAttributes) {
+        Locale userLocale = (locale != null) ? locale : LocaleContextHolder.getLocale();
+
         if (file.isEmpty()) {
-            redirectAttributes.addFlashAttribute("errorMessage", "Selecione um arquivo PDF válido para upload.");
+            String errorMsg = messageSource.getMessage("admin.document.error.file_empty", null, userLocale);
+            redirectAttributes.addFlashAttribute("errorMessage", errorMsg);
             return "redirect:/admin/documents";
         }
 
         try {
             String docTitle = (title != null && !title.isBlank()) ? title.trim() : file.getOriginalFilename();
             ingestionService.ingestDocument(docTitle, file.getOriginalFilename(), file.getInputStream(), subjectIds, strategy);
-            redirectAttributes.addFlashAttribute("successMessage", "Documento '" + docTitle + "' enviado e indexado com sucesso!");
+            String successMsg = messageSource.getMessage("admin.document.success.uploaded", new Object[]{docTitle}, userLocale);
+            redirectAttributes.addFlashAttribute("successMessage", successMsg);
         } catch (IOException | RuntimeException e) {
-            redirectAttributes.addFlashAttribute("errorMessage", "Falha na ingestão do documento: " + e.getMessage());
+            String errorMsg = messageSource.getMessage("admin.document.error.ingestion_failed", new Object[]{e.getMessage()}, userLocale);
+            redirectAttributes.addFlashAttribute("errorMessage", errorMsg);
         }
 
+        return "redirect:/admin/documents";
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public String handleMaxUploadSizeExceeded(MaxUploadSizeExceededException exc,
+                                              Locale locale,
+                                              RedirectAttributes redirectAttributes) {
+        Locale userLocale = (locale != null) ? locale : LocaleContextHolder.getLocale();
+        String errorMsg = messageSource.getMessage("admin.document.error.file_size_exceeded", null, userLocale);
+        redirectAttributes.addFlashAttribute("errorMessage", errorMsg);
         return "redirect:/admin/documents";
     }
 }

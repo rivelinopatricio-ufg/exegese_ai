@@ -29,14 +29,21 @@ import br.org.rivelino.exegese_ai.repository.ChatSessionRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.MessageSource;
+import org.springframework.context.NoSuchMessageException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
-import java.util.*;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
 
 /**
  * Service orchestrating RAG inference, anti-hallucination guard rails, and SSE streaming.
@@ -48,28 +55,93 @@ public class RagOrchestrationService {
 
     private static final Logger log = LoggerFactory.getLogger(RagOrchestrationService.class);
 
+    public static final String DEFAULT_SPECIALIST_SYSTEM_PROMPT = """
+        Você é o Exegese AI, assistente consultivo especialista e auditor com fundamentação documental estrita na base oficial selecionada.
+
+        SUA MISSÃO:
+        Resolver com precisão, clareza didática e máxima utilidade prática a dúvida do cidadão/contribuinte, transformando a complexidade dos manuais e normas em orientações claras e acionáveis.
+
+        DIRETRIZES FUNDAMENTAIS DE RESPOSTA:
+        1. RESPOSTA DIRETA & CONCLUSIVA:
+           - Inicie respondendo de forma imediata à pergunta formulada (ex.: "Sim, é dedutível.", "Não, não é obrigatório apresentar declaração.", "Depende do cumprimento dos seguintes requisitos:").
+
+        2. REQUISITOS, CONDIÇÕES & LIMITES:
+           - Apresente os requisitos ou condições em tópicos claros.
+           - Destaque em negrito todos os valores monetários (ex.: **R$ 2.275,08**, **R$ 30.639,90**), limites percentuais (ex.: **12%**, **20%**), idades (ex.: **até 24 anos**, **65 anos ou mais**) e datas/prazos (ex.: **até 30 de abril de 2026**).
+
+        3. ORIENTAÇÃO PRÁTICA PASSO A PASSO (COMO PROCEDER):
+           - Sempre que a dúvida envolver declaração ou procedimento, oriente objetivamente:
+             * Em qual Ficha ou Menu declarar (ex.: "Ficha Rendimentos Isentos e Não Tributáveis", "Ficha Pagamentos Efetuados", "Ficha Bens e Direitos").
+             * O Código correspondente, se informado nos documentos oficiais.
+             * Cuidados e comprovantes necessários a manter em guarda.
+
+        4. FIDELIDADE DOCUMENTAL ESTRITA (ZERO ALUCINAÇÃO):
+           - Todas as afirmações devem ser 100% embasadas nos trechos do "CONTEXTO DOCUMENTAL OFICIAL" fornecido.
+           - NUNCA invente leis, artigos, prazos ou regras não constantes no contexto.
+           - Se os trechos oficiais não contiverem a informação necessária para algum aspecto da dúvida, declare expressamente essa limitação com honestidade.
+
+        5. CITAÇÃO DAS FONTES OFICIAIS:
+           - Indique as fontes oficiais citadas no texto dos trechos (ex.: número da pergunta, Instrução Normativa ou Lei).
+
+        ESTRUTURA DE FORMATAÇÃO:
+        - Utilize Markdown limpo com listas, marcadores, tabelas quando comparativo e negrito para números e conceitos-chave.
+        """;
+
+    public static volatile String SPECIALIST_SYSTEM_PROMPT = DEFAULT_SPECIALIST_SYSTEM_PROMPT;
+
     private final HybridSearchService hybridSearchService;
     private final QueryRewritingService queryRewritingService;
     private final AntiHallucinationGuard antiHallucinationGuard;
     private final LlmProviderRouter providerRouter;
+    private final LlmClientService llmClientService;
     private final ChatSessionRepository sessionRepository;
     private final ChatMessageRepository messageRepository;
     private final ObjectMapper objectMapper;
+    private final MessageSource messageSource;
 
     public RagOrchestrationService(HybridSearchService hybridSearchService,
-                                  QueryRewritingService queryRewritingService,
-                                  AntiHallucinationGuard antiHallucinationGuard,
-                                  LlmProviderRouter providerRouter,
-                                  ChatSessionRepository sessionRepository,
-                                  ChatMessageRepository messageRepository,
-                                  ObjectMapper objectMapper) {
+                                   QueryRewritingService queryRewritingService,
+                                   AntiHallucinationGuard antiHallucinationGuard,
+                                   LlmProviderRouter providerRouter,
+                                   LlmClientService llmClientService,
+                                   ChatSessionRepository sessionRepository,
+                                   ChatMessageRepository messageRepository,
+                                   ObjectMapper objectMapper,
+                                   MessageSource messageSource) {
         this.hybridSearchService = hybridSearchService;
         this.queryRewritingService = queryRewritingService;
         this.antiHallucinationGuard = antiHallucinationGuard;
         this.providerRouter = providerRouter;
+        this.llmClientService = llmClientService;
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.objectMapper = objectMapper;
+        this.messageSource = messageSource;
+    }
+
+    @PostConstruct
+    public void init() {
+        configureSystemPromptForLocale(Locale.of("pt", "BR"));
+    }
+
+    /**
+     * Configures the specialist system prompt dynamically according to the specified locale.
+     *
+     * @param locale Target locale for the system prompt
+     */
+    public void configureSystemPromptForLocale(Locale locale) {
+        if (locale == null) {
+            locale = Locale.of("pt", "BR");
+        }
+        try {
+            String prompt = messageSource.getMessage("rag.specialist.system.prompt", null, locale);
+            if (prompt != null && !prompt.isBlank()) {
+                SPECIALIST_SYSTEM_PROMPT = prompt;
+                log.info("RagOrchestrationService SPECIALIST_SYSTEM_PROMPT reconfigured for locale: {}", locale);
+            }
+        } catch (NoSuchMessageException e) {
+            log.warn("Could not find rag.specialist.system.prompt for locale {}, keeping current prompt", locale, e);
+        }
     }
 
     /**
@@ -95,7 +167,11 @@ public class RagOrchestrationService {
         // 1. Persist User Message
         ChatMessage userMessage = new ChatMessage(session, "USER", userQuestion);
         if (subjectIds != null && !subjectIds.isEmpty()) {
-            userMessage.setAppliedSubjectIds(subjectIds.toString());
+            try {
+                userMessage.setAppliedSubjectIds(objectMapper.writeValueAsString(subjectIds));
+            } catch (JsonProcessingException e) {
+                log.warn("Failed to serialize subjectIds to JSON: {}", e.getMessage());
+            }
         }
         messageRepository.save(userMessage);
 
@@ -124,12 +200,43 @@ public class RagOrchestrationService {
             String citationsJson = objectMapper.writeValueAsString(citations);
             emitEvent(emitter, "citation", citationsJson);
 
-            // 6. Grounded Answer Synthesis & Streaming
+            // 6. Grounded Answer Synthesis & Streaming via Multi-Provider LLM
             AiModelConfig activeModel = providerRouter.getDefaultProvider();
-            String fullAnswer = generateGroundedAnswer(chunks);
+            String apiKey = providerRouter.resolveApiKey(activeModel.getProvider());
+            boolean hasKey = providerRouter.hasConfiguredKey(activeModel.getProvider());
 
-            // Stream response tokens
-            streamTokens(emitter, fullAnswer);
+            StringBuilder streamedAnswer = new StringBuilder();
+            boolean llmStreamed = false;
+
+            if (hasKey) {
+                String systemPrompt = SPECIALIST_SYSTEM_PROMPT;
+                String userPrompt = buildUserPromptWithContext(userQuestion, chunks);
+
+                llmStreamed = llmClientService.streamInference(
+                        activeModel,
+                        apiKey,
+                        systemPrompt,
+                        userPrompt,
+                        token -> {
+                            try {
+                                emitToken(emitter, token);
+                                streamedAnswer.append(token);
+                            } catch (IOException e) {
+                                throw new java.io.UncheckedIOException(e);
+                            }
+                        }
+                );
+            }
+
+            String fullAnswer;
+            if (llmStreamed && !streamedAnswer.isEmpty()) {
+                fullAnswer = streamedAnswer.toString();
+            } else {
+                // Fallback: structured multi-chunk document synthesis
+                fullAnswer = generateFallbackGroundedAnswer(chunks);
+                streamTokens(emitter, fullAnswer);
+            }
+
             emitComplete(emitter);
 
             // 7. Persist Assistant Response
@@ -138,6 +245,9 @@ public class RagOrchestrationService {
             assistantMessage.setModelUsed(activeModel.getModelName());
             assistantMessage.setExecutionDurationMs((int) (System.currentTimeMillis() - startTime));
             messageRepository.save(assistantMessage);
+
+            session.setUpdatedAt(Instant.now());
+            sessionRepository.save(session);
 
         } catch (IOException | RuntimeException e) {
             log.error("Error during RAG streaming orchestration: {}", e.getMessage(), e);
@@ -148,7 +258,24 @@ public class RagOrchestrationService {
         }
     }
 
-    private String generateGroundedAnswer(List<SearchResultChunk> chunks) {
+    private String buildUserPromptWithContext(String userQuestion, List<SearchResultChunk> chunks) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("=== CONTEXTO DOCUMENTAL OFICIAL ===\n\n");
+        for (int i = 0; i < chunks.size(); i++) {
+            SearchResultChunk chunk = chunks.get(i);
+            sb.append(String.format("[FONTE %d: %s", (i + 1), chunk.documentTitle()));
+            if (chunk.chunkTitle() != null && !chunk.chunkTitle().isBlank()) {
+                sb.append(" | ").append(chunk.chunkTitle());
+            }
+            sb.append("]\n");
+            sb.append(chunk.content().trim()).append("\n\n");
+        }
+        sb.append("=== DÚVIDA DO CONTRIBUINTE / CIDADÃO ===\n");
+        sb.append(userQuestion.trim());
+        return sb.toString();
+    }
+
+    private String generateFallbackGroundedAnswer(List<SearchResultChunk> chunks) {
         SearchResultChunk primary = chunks.get(0);
         StringBuilder sb = new StringBuilder();
         sb.append(primary.content().trim()).append("\n\n");

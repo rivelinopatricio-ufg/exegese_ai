@@ -32,7 +32,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.*;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Optional;
 
 /**
  * Dynamic AI provider router managing multi-ecosystem configurations and AES-256-GCM credentials.
@@ -61,7 +63,7 @@ public class LlmProviderRouter {
     public void bootstrapProviders() {
         log.info("Bootstrapping AI model provider configurations...");
 
-        initProvider(ModelProvider.GEMINI, "Google Gemini", "gemini-2.5-flash", "https://generativelanguage.googleapis.com", true);
+        initProvider(ModelProvider.GEMINI, "Google Gemini", "gemini-3.5-flash-lite", "https://generativelanguage.googleapis.com", true);
         initProvider(ModelProvider.CLAUDE, "Anthropic Claude", "claude-3-7-sonnet", "https://api.anthropic.com", false);
         initProvider(ModelProvider.OPENAI, "OpenAI ChatGPT", "gpt-4o", "https://api.openai.com/v1", false);
         initProvider(ModelProvider.NEMOTRON, "NVIDIA Nemotron", "nvidia/nemotron-4-340b-instruct", "https://integrate.api.nvidia.com/v1", false);
@@ -79,6 +81,11 @@ public class LlmProviderRouter {
             config.setDefault(isDefault);
             modelConfigRepository.save(config);
             log.info("Initialized default configuration for provider {}", provider);
+        } else if (provider == ModelProvider.GEMINI && "gemini-2.5-flash".equalsIgnoreCase(existing.get().getModelName())) {
+            AiModelConfig config = existing.get();
+            config.setModelName("gemini-3.5-flash-lite");
+            modelConfigRepository.save(config);
+            log.info("Migrated legacy Gemini model configuration to gemini-3.5-flash-lite");
         }
     }
 
@@ -148,18 +155,31 @@ public class LlmProviderRouter {
             return cryptoService.decrypt(configOpt.get().getApiKeyEncrypted());
         }
 
-        // Fallback to system environment variable
+        // Fallback to system environment variable or Spring configuration properties
         String envKey = switch (provider) {
-            case GEMINI -> environment.getProperty("GEMINI_API_KEY");
+            case GEMINI -> {
+                String k = environment.getProperty("GEMINI_API_KEY");
+                yield (k != null && !k.isBlank()) ? k : environment.getProperty("spring.ai.google.genai.api-key");
+            }
             case CLAUDE -> environment.getProperty("ANTHROPIC_API_KEY");
-            case OPENAI -> environment.getProperty("OPENAI_API_KEY");
+            case OPENAI -> {
+                String k = environment.getProperty("OPENAI_API_KEY");
+                yield (k != null && !k.isBlank()) ? k : environment.getProperty("spring.ai.openai.api-key");
+            }
             case NEMOTRON -> environment.getProperty("NVIDIA_API_KEY");
             case DEEPSEEK -> environment.getProperty("DEEPSEEK_API_KEY");
             case OLLAMA_LOCAL -> "";
-            case CEREBRAS -> environment.getProperty("CEREBRAS_API_KEY");
+            case CEREBRAS -> {
+                String k = environment.getProperty("CEREBRAS_API_KEY");
+                yield (k != null && !k.isBlank()) ? k : environment.getProperty("cerebras.api-key");
+            }
         };
 
-        return envKey != null ? envKey : "";
+        if (envKey != null && (envKey.isBlank() || "dummy-key".equalsIgnoreCase(envKey.trim()))) {
+            return "";
+        }
+
+        return envKey != null ? envKey.trim() : "";
     }
 
     public boolean hasConfiguredKey(ModelProvider provider) {

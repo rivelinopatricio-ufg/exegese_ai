@@ -19,8 +19,24 @@
  *******************************************************************************/
 package br.org.rivelino.exegese_ai.domain.entity;
 
-import jakarta.persistence.*;
+import br.org.rivelino.exegese_ai.domain.dto.CanonicalCitationDTO;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -32,6 +48,8 @@ import java.util.UUID;
 @Entity
 @Table(name = "chat_message")
 public class ChatMessage {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -47,11 +65,16 @@ public class ChatMessage {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
-    @Column(name = "applied_subject_ids", columnDefinition = "TEXT")
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "applied_subject_ids")
     private String appliedSubjectIds;
 
-    @Column(columnDefinition = "TEXT")
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "citations")
     private String citations;
+
+    @Transient
+    private transient List<CanonicalCitationDTO> parsedCitationsCache;
 
     @Column(name = "model_used", length = 100)
     private String modelUsed;
@@ -118,6 +141,25 @@ public class ChatMessage {
 
     public void setCitations(String citations) {
         this.citations = citations;
+        this.parsedCitationsCache = null;
+    }
+
+    @Transient
+    public List<CanonicalCitationDTO> getParsedCitations() {
+        if (parsedCitationsCache != null) {
+            return parsedCitationsCache;
+        }
+        if (citations == null || citations.isBlank()) {
+            this.parsedCitationsCache = List.of();
+            return this.parsedCitationsCache;
+        }
+        try {
+            this.parsedCitationsCache = OBJECT_MAPPER.readValue(citations, new TypeReference<List<CanonicalCitationDTO>>() {});
+            return this.parsedCitationsCache;
+        } catch (@SuppressWarnings("unused") JsonProcessingException e) {
+            this.parsedCitationsCache = List.of();
+            return this.parsedCitationsCache;
+        }
     }
 
     public String getModelUsed() {

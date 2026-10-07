@@ -19,10 +19,18 @@
  *******************************************************************************/
 package br.org.rivelino.exegese_ai.config;
 
+import br.org.rivelino.exegese_ai.service.RagOrchestrationService;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.time.Duration;
 import java.util.Locale;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.servlet.LocaleResolver;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -32,6 +40,7 @@ import org.springframework.web.servlet.i18n.LocaleChangeInterceptor;
 /**
  * Spring Web MVC internationalization configuration setting up cookie-based locale resolution
  * with default Brazilian Portuguese (pt-BR) and query parameter locale switching.
+ * Language modification is permitted only prior to login.
  *
  * @author Rivelino Patrício
  */
@@ -40,6 +49,12 @@ public class I18nConfiguration implements WebMvcConfigurer {
 
     public static final String LOCALE_COOKIE_NAME = "EXEGESE_LOCALE";
     public static final String LOCALE_PARAM_NAME = "lang";
+
+    private final ObjectProvider<RagOrchestrationService> ragOrchestrationServiceProvider;
+
+    public I18nConfiguration(ObjectProvider<RagOrchestrationService> ragOrchestrationServiceProvider) {
+        this.ragOrchestrationServiceProvider = ragOrchestrationServiceProvider;
+    }
 
     @Bean
     public LocaleResolver localeResolver() {
@@ -53,7 +68,29 @@ public class I18nConfiguration implements WebMvcConfigurer {
 
     @Bean
     public LocaleChangeInterceptor localeChangeInterceptor() {
-        LocaleChangeInterceptor interceptor = new LocaleChangeInterceptor();
+        LocaleChangeInterceptor interceptor = new LocaleChangeInterceptor() {
+            @Override
+            public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws ServletException {
+                String newLocale = request.getParameter(getParamName());
+                if (newLocale != null) {
+                    Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+                    boolean isAuthenticated = auth != null && auth.isAuthenticated() && !(auth instanceof AnonymousAuthenticationToken);
+                    if (isAuthenticated) {
+                        // Language alteration is blocked after login to simplify application state
+                        return true;
+                    }
+                    boolean result = super.preHandle(request, response, handler);
+                    try {
+                        Locale locale = parseLocaleValue(newLocale);
+                        ragOrchestrationServiceProvider.ifAvailable(service -> service.configureSystemPromptForLocale(locale));
+                    } catch (IllegalArgumentException e) {
+                        // ignore malformed locale string
+                    }
+                    return result;
+                }
+                return true;
+            }
+        };
         interceptor.setParamName(LOCALE_PARAM_NAME);
         return interceptor;
     }

@@ -22,7 +22,6 @@ package br.org.rivelino.exegese_ai.repository;
 import br.org.rivelino.exegese_ai.domain.entity.UserSubjectPermission;
 import br.org.rivelino.exegese_ai.domain.entity.UserSubjectPermissionId;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.UUID;
@@ -32,7 +31,6 @@ import java.util.UUID;
  *
  * @author Rivelino Patrício
  */
-@Repository
 public interface UserSubjectPermissionRepository extends JpaRepository<UserSubjectPermission, UserSubjectPermissionId> {
 
     List<UserSubjectPermission> findByIdUserId(UUID userId);

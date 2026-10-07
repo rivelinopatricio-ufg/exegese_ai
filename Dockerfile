@@ -43,7 +43,7 @@ COPY --from=builder --chown=appuser:appgroup /workspace/target/exegese-ai-1.0.0-
 USER 10001:10001
 
 # Production JVM configuration
-ENV JVM_OPTS="-XX:+UseZGC -XX:+ZGenerational -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8"
+ENV JVM_OPTS="-XX:+UseZGC -XX:+ZGenerational -XX:+ExitOnOutOfMemoryError --enable-native-access=ALL-UNNAMED -Dfile.encoding=UTF-8"
 ENV PORT=8080
 
 EXPOSE 8080

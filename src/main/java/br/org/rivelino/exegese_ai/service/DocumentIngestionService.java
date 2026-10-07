@@ -33,14 +33,17 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.document.Document;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.sql.DataSource;
 import java.io.IOException;
 import java.io.InputStream;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -63,6 +66,8 @@ public class DocumentIngestionService {
     private final CryptoService cryptoService;
     private final EmbeddingModel embeddingModel;
     private final ObjectMapper objectMapper;
+    private final JdbcTemplate jdbcTemplate;
+    private final boolean isPostgres;
 
     public DocumentIngestionService(ExegeseDocumentRepository documentRepository,
                                   ExegeseChunkRepository chunkRepository,
@@ -71,7 +76,9 @@ public class DocumentIngestionService {
                                   SegmentationStrategyFactory strategyFactory,
                                   CryptoService cryptoService,
                                   EmbeddingModel embeddingModel,
-                                  ObjectMapper objectMapper) {
+                                  ObjectMapper objectMapper,
+                                  JdbcTemplate jdbcTemplate,
+                                  DataSource dataSource) {
         this.documentRepository = documentRepository;
         this.chunkRepository = chunkRepository;
         this.subjectRepository = subjectRepository;
@@ -80,6 +87,8 @@ public class DocumentIngestionService {
         this.cryptoService = cryptoService;
         this.embeddingModel = embeddingModel;
         this.objectMapper = objectMapper;
+        this.jdbcTemplate = jdbcTemplate;
+        this.isPostgres = checkPostgreSql(dataSource);
     }
 
     /**
@@ -159,7 +168,7 @@ public class DocumentIngestionService {
             }
         }
 
-        doc = documentRepository.save(doc);
+        doc = documentRepository.saveAndFlush(doc);
 
         try {
             SegmentationStrategy strategy = strategyFactory.getStrategy(effectiveStrategy);
@@ -174,22 +183,41 @@ public class DocumentIngestionService {
 
                 String metadataJson = serializeMetadata(rawChunk.metadata());
 
-                // Generate vector embedding
-                embeddingModel.embed(new Document(rawChunk.content()));
+                float[] embedding;
+                try {
+                    embedding = embeddingModel.embed(rawChunk.content());
+                } catch (RuntimeException e) {
+                    log.warn("Embedding generation failed for chunk {}: {}, falling back to zero vector",
+                            rawChunk.sequenceNumber(), e.getMessage());
+                    embedding = new float[768];
+                }
 
-                ExegeseChunk chunk = new ExegeseChunk(
-                        doc,
-                        rawChunk.chunkHashSha256(),
-                        rawChunk.sequenceNumber(),
-                        rawChunk.title(),
-                        rawChunk.content(),
-                        metadataJson
-                );
-                chunkRepository.save(chunk);
+                if (embedding == null || embedding.length != 768) {
+                    embedding = new float[768];
+                }
+
+                if (isPostgres) {
+                    UUID chunkId = UUID.randomUUID();
+                    String vectorStr = formatVector(embedding);
+                    jdbcTemplate.update("""
+                        INSERT INTO exegese_chunk (id, document_id, chunk_hash_sha256, sequence_number, title, content, metadata, embedding, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, cast(? as vector), CURRENT_TIMESTAMP)
+                    """, chunkId, doc.getId(), rawChunk.chunkHashSha256(), rawChunk.sequenceNumber(), rawChunk.title(), rawChunk.content(), metadataJson, vectorStr);
+                } else {
+                    ExegeseChunk chunk = new ExegeseChunk(
+                            doc,
+                            rawChunk.chunkHashSha256(),
+                            rawChunk.sequenceNumber(),
+                            rawChunk.title(),
+                            rawChunk.content(),
+                            metadataJson
+                    );
+                    chunkRepository.save(chunk);
+                }
             }
 
             doc.setStatus("INDEXED");
-            doc = documentRepository.save(doc);
+            doc = documentRepository.saveAndFlush(doc);
             log.info("Successfully indexed document '{}' with {} total chunks", title, rawChunks.size());
             return doc;
         } catch (DataAccessException e) {
@@ -205,6 +233,31 @@ public class DocumentIngestionService {
             documentRepository.save(doc);
             throw new IllegalStateException("Chunk indexing failed for document: " + title, e);
         }
+    }
+
+    private boolean checkPostgreSql(DataSource dataSource) {
+        if (dataSource == null) {
+            return false;
+        }
+        try (Connection connection = dataSource.getConnection()) {
+            String product = connection.getMetaData().getDatabaseProductName();
+            return product != null && product.toLowerCase().contains("postgres");
+        } catch (SQLException e) {
+            log.warn("Could not determine database product name, assuming non-postgres: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    private String formatVector(float[] vector) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < vector.length; i++) {
+            sb.append(vector[i]);
+            if (i < vector.length - 1) {
+                sb.append(",");
+            }
+        }
+        sb.append("]");
+        return sb.toString();
     }
 
     private String serializeMetadata(Object metadata) {

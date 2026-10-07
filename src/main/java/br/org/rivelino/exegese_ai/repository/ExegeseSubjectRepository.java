@@ -21,7 +21,6 @@ package br.org.rivelino.exegese_ai.repository;
 
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseSubject;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
@@ -32,7 +31,6 @@ import java.util.UUID;
  *
  * @author Rivelino Patrício
  */
-@Repository
 public interface ExegeseSubjectRepository extends JpaRepository<ExegeseSubject, UUID> {
 
     Optional<ExegeseSubject> findByCode(String code);

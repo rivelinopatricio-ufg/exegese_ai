@@ -24,6 +24,7 @@ import br.org.rivelino.exegese_ai.domain.enums.UserRole;
 import br.org.rivelino.exegese_ai.service.UserService;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.stereotype.Component;
@@ -57,6 +58,9 @@ public class SecurityContextFacade {
         if (principal instanceof OAuth2User oauth2User) {
             return Optional.ofNullable(oauth2User.getAttribute("email"));
         }
+        if (principal instanceof UserDetails userDetails) {
+            return Optional.ofNullable(userDetails.getUsername());
+        }
         if (principal instanceof String principalString && !"anonymousUser".equals(principalString)) {
             return Optional.of(principalString);
         }
@@ -68,10 +72,19 @@ public class SecurityContextFacade {
     }
 
     public boolean isAdmin() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getAuthorities().stream().anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()))) {
+            return true;
+        }
         return getCurrentUser().map(user -> user.getRole() == UserRole.ROLE_ADMIN).orElse(false);
     }
 
     public boolean isOperatorOrAdmin() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getAuthorities().stream().anyMatch(a ->
+                "ROLE_ADMIN".equals(a.getAuthority()) || "ROLE_OPERATOR".equals(a.getAuthority()))) {
+            return true;
+        }
         return getCurrentUser()
                 .map(user -> user.getRole() == UserRole.ROLE_ADMIN || user.getRole() == UserRole.ROLE_OPERATOR)
                 .orElse(false);

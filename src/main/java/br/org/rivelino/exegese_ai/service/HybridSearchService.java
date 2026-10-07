@@ -31,7 +31,13 @@ import org.springframework.stereotype.Service;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.SQLException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 
 /**
  * Service orchestrating hybrid search combining semantic vector retrieval (HNSW cosine)
@@ -130,7 +136,7 @@ public class HybridSearchService {
 
             sql.append(" ORDER BY distance ASC LIMIT ").append(CANDIDATE_LIMIT);
 
-            return jdbcTemplate.query(sql.toString(), params, (rs, rowNum) -> new RetrievedChunk(
+            return jdbcTemplate.query(sql.toString(), params, (var rs, @SuppressWarnings("unused") var rowNum) -> new RetrievedChunk(
                     UUID.fromString(rs.getString("id")),
                     UUID.fromString(rs.getString("document_id")),
                     rs.getString("doc_title"),
@@ -179,7 +185,7 @@ public class HybridSearchService {
 
             sql.append(" ORDER BY rank DESC LIMIT ").append(CANDIDATE_LIMIT);
 
-            return jdbcTemplate.query(sql.toString(), params, (rs, rowNum) -> new RetrievedChunk(
+            return jdbcTemplate.query(sql.toString(), params, (var rs, @SuppressWarnings("unused") var rowNum) -> new RetrievedChunk(
                     UUID.fromString(rs.getString("id")),
                     UUID.fromString(rs.getString("document_id")),
                     rs.getString("doc_title"),
@@ -244,7 +250,7 @@ public class HybridSearchService {
             params.addValue("subjectIds", subjectIds);
         }
 
-        List<RetrievedChunk> candidates = jdbcTemplate.query(sql.toString(), params, (rs, rowNum) -> new RetrievedChunk(
+        List<RetrievedChunk> candidates = jdbcTemplate.query(sql.toString(), params, (var rs, @SuppressWarnings("unused") var rowNum) -> new RetrievedChunk(
                 UUID.fromString(rs.getString("id")),
                 UUID.fromString(rs.getString("document_id")),
                 rs.getString("doc_title"),
@@ -327,7 +333,7 @@ public class HybridSearchService {
         // Process vector candidates (1-based ranking)
         for (int rank = 1; rank <= vectorCandidates.size(); rank++) {
             RetrievedChunk c = vectorCandidates.get(rank - 1);
-            RrfAccumulator acc = map.computeIfAbsent(c.id(), k -> new RrfAccumulator(c));
+            RrfAccumulator acc = map.computeIfAbsent(c.id(), (@SuppressWarnings("unused") var k) -> new RrfAccumulator(c));
             acc.vectorRank = rank;
             acc.score += 1.0 / (RRF_K + rank);
         }
@@ -335,7 +341,7 @@ public class HybridSearchService {
         // Process text candidates (1-based ranking)
         for (int rank = 1; rank <= textCandidates.size(); rank++) {
             RetrievedChunk c = textCandidates.get(rank - 1);
-            RrfAccumulator acc = map.computeIfAbsent(c.id(), k -> new RrfAccumulator(c));
+            RrfAccumulator acc = map.computeIfAbsent(c.id(), (@SuppressWarnings("unused") var k) -> new RrfAccumulator(c));
             acc.textRank = rank;
             acc.score += 1.0 / (RRF_K + rank);
         }

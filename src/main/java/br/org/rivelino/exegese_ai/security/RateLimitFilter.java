@@ -60,7 +60,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         // Enforce rate limiting specifically on /api/** endpoints
         if (uri.startsWith("/api/")) {
             String clientIp = resolveClientIp(request);
-            Bucket bucket = ipBuckets.computeIfAbsent(clientIp, k -> createNewBucket());
+            Bucket bucket = ipBuckets.computeIfAbsent(clientIp, (@SuppressWarnings("unused") var k) -> createNewBucket());
 
             if (!bucket.tryConsume(1)) {
                 response.setStatus(429);

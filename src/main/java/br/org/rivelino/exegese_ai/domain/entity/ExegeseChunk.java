@@ -20,6 +20,8 @@
 package br.org.rivelino.exegese_ai.domain.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
@@ -53,8 +55,9 @@ public class ExegeseChunk {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
-    @Column(columnDefinition = "TEXT")
-    private String metadata;
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "metadata", nullable = false)
+    private String metadata = "{}";
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
@@ -69,7 +72,7 @@ public class ExegeseChunk {
         this.sequenceNumber = sequenceNumber;
         this.title = title;
         this.content = content;
-        this.metadata = metadata;
+        this.metadata = (metadata != null && !metadata.isBlank()) ? metadata : "{}";
         this.createdAt = Instant.now();
     }
 
@@ -126,7 +129,7 @@ public class ExegeseChunk {
     }
 
     public void setMetadata(String metadata) {
-        this.metadata = metadata;
+        this.metadata = (metadata != null && !metadata.isBlank()) ? metadata : "{}";
     }
 
     public Instant getCreatedAt() {
