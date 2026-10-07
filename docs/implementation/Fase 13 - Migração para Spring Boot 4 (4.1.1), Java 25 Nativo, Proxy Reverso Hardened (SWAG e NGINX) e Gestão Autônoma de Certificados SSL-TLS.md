@@ -1,10 +1,10 @@
-# Plano de Implementação: Migração para Spring Boot 4 (4.1.1), Java 25 Nativo, Proxy Reverso Hardened (SWAG / NGINX) e Gestão Autônoma de Certificados SSL/TLS
+# Fase 13 — Plano de Implementação: Migração para Spring Boot 4 (4.1.1), Java 25 Nativo, Proxy Reverso Hardened (SWAG / NGINX) e Gestão Autônoma de Certificados SSL/TLS
 
 ## 1. Visão Geral e Contexto
 
 Este plano estabelece a estratégia detalhada, etapas de engenharia, dependências e critérios de aceite para alinhar o **Exegese AI** à sua diretiva arquitetural primária (estabelecida na documentação base do projeto e na skill operacional `exegese-ops`), executando simultaneamente:
 
-1. **Migração do Framework para Spring Boot 4.x (4.1.1 - Última Versão Estável)**:
+1. **Migração do Framework para Spring Boot 4.x (4.1.1 - Versão Homologada)**:
    - Substituição do `spring-boot-starter-parent` `3.4.2` pela versão mais recente da linha 4.x (**Spring Boot 4.1.1**).
    - Atualização do ecossistema de dependências correlatas, em especial o **Spring AI** para a versão **2.0.1** (compatível com Spring Boot 4 e Spring Framework 7 / Jakarta EE 11).
 2. **Compilação e Runtime em Java 25 Nativo**:
@@ -278,17 +278,14 @@ server {
 
 ### ETAPA 4: Integração do Spring Boot com o Proxy Reverso
 
-#### 4.1. Atualização do `src/main/resources/application.yml`
+#### 4.1. Configuração do `application.properties`
 Configurar o Spring Boot para processar os cabeçalhos `X-Forwarded-*` enviados pelo proxy reverso:
-```yaml
-server:
-  port: ${PORT:8080}
-  forward-headers-strategy: framework
-  tomcat:
-    remoteip:
-      remote-ip-header: X-Forwarded-For
-      protocol-header: X-Forwarded-Proto
-      internal-proxies: 10\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}|172\\.(1[6-9]|2[0-9]|3[0-1])\\.\\d{1,3}\\.\\d{1,3}|192\\.168\\.\\d{1,3}\\.\\d{1,3}|127\\.0\\.0\\.1
+```properties
+server.port=${PORT:8080}
+server.forward-headers-strategy=framework
+server.tomcat.remoteip.remote-ip-header=X-Forwarded-For
+server.tomcat.remoteip.protocol-header=X-Forwarded-Proto
+server.tomcat.remoteip.internal-proxies=10\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}|172\\.(1[6-9]|2[0-9]|3[0-1])\\.\\d{1,3}\\.\\d{1,3}|192\\.168\\.\\d{1,3}\\.\\d{1,3}|127\\.0\\.0\\.1
 ```
 
 ---
