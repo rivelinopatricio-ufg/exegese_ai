@@ -1,0 +1,32 @@
+# ==============================================================================
+# Exegese AI - Remote PostgreSQL 17 + pgvector Standalone Service
+# Usage on remote machine: docker compose up -d --build
+# ==============================================================================
+
+version: "3.8"
+
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: exegese-ai-postgres:17-pgvector
+    container_name: exegese-ai-db
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-exegese_db}
+      POSTGRES_USER: ${POSTGRES_USER:-exegese_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-exegese_password}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-exegese_user} -d ${POSTGRES_DB:-exegese_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+    driver: local

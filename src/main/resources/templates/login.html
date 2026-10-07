@@ -4,15 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title th:text="#{login.page.title}">Exegese AI — Acesso Institucional</title>
+    <link rel="icon" type="image/png" th:href="@{/images/logo.png}">
     <link rel="stylesheet" th:href="@{/css/app.css}">
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center p-4">
     <div class="max-w-md w-full bg-slate-800 rounded-xl shadow-2xl p-8 border border-slate-700 text-center">
-        <!-- Brand Header -->
+        <!-- Brand Header with Official Logo -->
         <div class="mb-5">
-            <div class="w-12 h-12 mx-auto mb-3 rounded-xl bg-sky-600 flex items-center justify-center font-bold text-2xl text-white shadow-lg shadow-sky-900/50">
-                E
+            <div class="w-20 h-20 mx-auto mb-3 rounded-2xl overflow-hidden shadow-xl shadow-sky-950/60 border border-sky-500/40 bg-slate-900 p-0.5">
+                <img th:src="@{/images/logo.png}" alt="Exegese AI Logo" class="w-full h-full object-cover rounded-xl">
             </div>
             <h1 class="text-3xl font-bold text-white tracking-tight" th:text="#{login.header.title}">Exegese AI</h1>
             <p class="text-slate-400 text-sm mt-1" th:text="#{login.header.subtitle}">Plataforma RAG de Rigor Exegético e Grounding Normativo</p>
