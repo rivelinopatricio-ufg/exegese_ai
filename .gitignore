@@ -7,7 +7,7 @@
 
 # Application configuration & Environment secrets
 .env
-app_config
+app_config*
 
 # IDE & Tooling
 /.settings/

@@ -5,7 +5,7 @@ bin/
 .classpath
 .project
 .env
-app_config
+app_config*
 docs/
 pgdata/
 ollama_data/
