@@ -178,6 +178,11 @@ uninstall_environment() {
             log_warn "Removing .env configuration file..."
             rm -f .env
         fi
+        if command -v ufw &> /dev/null; then
+            log_info "Tip: To remove firewall rules in Ubuntu UFW, run:"
+            echo -e "  sudo ufw delete allow 80/tcp"
+            echo -e "  sudo ufw delete allow 443/tcp"
+        fi
         log_success "Uninstallation completed successfully."
     else
         log_info "Uninstallation canceled by user."
@@ -241,6 +246,9 @@ configure_environment() {
             log_info "Using existing configuration from .env."
             if [[ -z "$HTTPS_PORT" ]]; then
                 HTTPS_PORT=$(grep -E '^HTTPS_PORT=' .env | cut -d '=' -f2- || echo "443")
+            fi
+            if [[ -z "$HTTP_PORT" ]]; then
+                HTTP_PORT=$(grep -E '^HTTP_PORT=' .env | cut -d '=' -f2- || echo "80")
             fi
             return 0
         fi
@@ -418,7 +426,8 @@ EOF
 
 configure_nginx_proxy() {
     local target_https_port="${HTTPS_PORT:-443}"
-    log_info "Configuring NGINX site definition with public HTTPS port (${target_https_port})..."
+    local target_http_port="${HTTP_PORT:-80}"
+    log_info "Configuring NGINX site definition with HTTP port (${target_http_port}) and HTTPS port (${target_https_port})..."
 
     local https_redirect_target="https://\$host\$request_uri"
     local forwarded_port="443"
@@ -436,8 +445,8 @@ configure_nginx_proxy() {
 
 # HTTP Block: Automatic redirect to HTTPS
 server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
+    listen ${target_http_port} default_server;
+    listen [::]:${target_http_port} default_server;
 
     server_name _;
 
@@ -446,8 +455,9 @@ server {
 
 # HTTPS Block: SWAG-managed TLS termination and Spring Boot upstream
 server {
-    listen 443 ssl http2 default_server;
-    listen [::]:443 ssl http2 default_server;
+    listen ${target_https_port} ssl default_server;
+    listen [::]:${target_https_port} ssl default_server;
+    http2 on;
 
     server_name _;
 
@@ -499,8 +509,56 @@ server {
         proxy_set_header X-Forwarded-Port ${forwarded_port};
     }
 }
+
+# enable subdomain method reverse proxy confs
+include /config/nginx/proxy-confs/*.subdomain.conf;
+# enable proxy cache for auth
+proxy_cache_path cache/ keys_zone=auth_cache:10m;
 EOF
-    log_success "NGINX configuration dynamically generated for HTTPS port ${target_https_port}."
+    log_success "NGINX configuration dynamically generated for HTTP port ${target_http_port} and HTTPS port ${target_https_port}."
+}
+
+configure_firewall() {
+    local target_http_port="${HTTP_PORT:-80}"
+    local target_https_port="${HTTPS_PORT:-443}"
+
+    echo ""
+    log_info "Verifying Ubuntu firewall (UFW) configuration..."
+
+    if command -v ufw &> /dev/null; then
+        local ufw_status
+        ufw_status=$(ufw status 2>/dev/null || sudo ufw status 2>/dev/null || true)
+
+        if echo "$ufw_status" | grep -qi "Status: active"; then
+            log_warn "Ubuntu UFW firewall is ACTIVE. Releasing incoming traffic for configured ports..."
+
+            local cmd_prefix=""
+            if [[ $EUID -ne 0 ]]; then
+                if command -v sudo &> /dev/null; then
+                    cmd_prefix="sudo "
+                fi
+            fi
+
+            echo -e "${CLR_YELLOW}${CLR_BOLD}[FIREWALL NOTICE]${CLR_RESET} Configuring UFW ingress rules for ports ${target_http_port}/tcp (HTTP) and ${target_https_port}/tcp (HTTPS)..."
+
+            if ${cmd_prefix}ufw allow "${target_http_port}/tcp" comment 'Exegese AI HTTP' &> /dev/null && \
+               ${cmd_prefix}ufw allow "${target_https_port}/tcp" comment 'Exegese AI HTTPS' &> /dev/null; then
+                log_success "Ubuntu UFW rules successfully applied: ${target_http_port}/tcp and ${target_https_port}/tcp are open."
+            else
+                log_warn "Unable to execute 'ufw allow' automatically. Please execute manually with sudo privileges:"
+                echo -e "  ${CLR_CYAN}${cmd_prefix}ufw allow ${target_http_port}/tcp comment 'Exegese AI HTTP'${CLR_RESET}"
+                echo -e "  ${CLR_CYAN}${cmd_prefix}ufw allow ${target_https_port}/tcp comment 'Exegese AI HTTPS'${CLR_RESET}"
+            fi
+        else
+            log_info "Ubuntu UFW firewall is installed but currently INACTIVE (disabled)."
+            echo -e "${CLR_YELLOW}${CLR_BOLD}[FIREWALL NOTICE]${CLR_RESET} If you enable UFW or manage an external cloud firewall (AWS Security Group, Oracle Cloud VCN, etc.), release incoming TCP traffic on ports:"
+            echo -e "  ${CLR_CYAN}sudo ufw allow ${target_http_port}/tcp comment 'Exegese AI HTTP'${CLR_RESET}"
+            echo -e "  ${CLR_CYAN}sudo ufw allow ${target_https_port}/tcp comment 'Exegese AI HTTPS'${CLR_RESET}"
+        fi
+    else
+        log_info "Ubuntu UFW utility not found on host."
+        echo -e "${CLR_YELLOW}${CLR_BOLD}[FIREWALL NOTICE]${CLR_RESET} Please ensure your operating system or cloud security group allows incoming TCP connections on ports ${target_http_port} and ${target_https_port}."
+    fi
 }
 
 start_services() {
@@ -585,6 +643,11 @@ print_summary() {
     echo -e "  spring.security.oauth2.client.registration.google.client-id:     ${CLR_CYAN}${GOOGLE_CLIENT_ID:-(not provided)}${CLR_RESET}"
     echo -e "  spring.security.oauth2.client.registration.google.client-secret: ${CLR_CYAN}${GOOGLE_CLIENT_SECRET:+[CONFIGURED]}${CLR_RESET}"
     echo ""
+    echo -e "${CLR_BOLD}Firewall Configuration (Ubuntu UFW):${CLR_RESET}"
+    echo -e "  Open HTTP Port:              ${CLR_CYAN}sudo ufw allow ${HTTP_PORT:-80}/tcp comment 'Exegese AI HTTP'${CLR_RESET}"
+    echo -e "  Open HTTPS Port:             ${CLR_CYAN}sudo ufw allow ${HTTPS_PORT:-443}/tcp comment 'Exegese AI HTTPS'${CLR_RESET}"
+    echo -e "  Inspect Active Status:       ${CLR_CYAN}sudo ufw status verbose${CLR_RESET}"
+    echo ""
     echo -e "${CLR_BOLD}Useful Operational Commands:${CLR_RESET}"
     echo "  View real-time logs:     docker compose logs -f"
     echo "  Stop the environment:    docker compose down"
@@ -606,6 +669,7 @@ main() {
     print_banner
     check_prerequisites
     configure_environment
+    configure_firewall
     start_services
     wait_for_health
     bootstrap_ingestion

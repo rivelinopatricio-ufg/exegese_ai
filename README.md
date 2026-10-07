@@ -108,6 +108,7 @@
 ### 3.1. Pré-Requisitos
 - **Docker Engine** 24.0+ e **Docker Compose** v2+
 - Utilitário `curl`
+- Portas de entrada liberadas no firewall (`ufw` no Ubuntu)
 - Navegador moderno com suporte a JavaScript
 
 ### 3.2. Instalação Automática com `install.sh`
@@ -136,6 +137,36 @@ Após a inicialização do SWAG e o healthcheck da aplicação, acesse:
 - **Gestão de Usuários**: `https://${SERVER_NAME}:${HTTPS_PORT}/admin/users`
 - **Gestão de Provedores AI**: `https://${SERVER_NAME}:${HTTPS_PORT}/admin/models`
 - **Saúde e Diagnóstico**: `https://${SERVER_NAME}:${HTTPS_PORT}/actuator/health`
+
+### 3.3. Configuração de Firewall no Host (Padrão Ubuntu - UFW)
+
+Se o servidor utiliza **Ubuntu** com o firewall **UFW** (*Uncomplicated Firewall*) ativo, é obrigatório autorizar o tráfego de entrada nas portas HTTP e HTTPS configuradas para viabilizar o acesso web e a validação ACME de certificados Let's Encrypt:
+
+> [!IMPORTANT]
+> **Aviso de Firewall**: O instalador `install.sh` detecta automaticamente o UFW e aplica as liberações das portas informadas. Caso o servidor esteja hospedado em nuvem (Oracle Cloud OCI, AWS, GCP, Azure), lembre-se de autorizar as mesmas portas nas **Listas de Segurança / Security Groups / Ingress Rules** do painel da sua nuvem.
+
+#### Comandos de Liberação no Ubuntu (UFW):
+```bash
+# 1. Liberar porta HTTP (80 ou personalizada)
+sudo ufw allow 80/tcp comment 'Exegese AI HTTP'
+
+# 2. Liberar porta HTTPS (443 ou personalizada, ex: 446 / 8443)
+sudo ufw allow 443/tcp comment 'Exegese AI HTTPS'
+
+# 3. (Recomendado) Garantir que a porta SSH continue liberada
+sudo ufw allow OpenSSH
+
+# 4. Habilitar o firewall e verificar status das regras
+sudo ufw enable
+sudo ufw status verbose
+```
+
+#### Para portas personalizadas (exemplo: HTTP 8080 e HTTPS 446):
+```bash
+sudo ufw allow 8080/tcp comment 'Exegese AI HTTP Alt'
+sudo ufw allow 446/tcp comment 'Exegese AI HTTPS Alt'
+sudo ufw status verbose
+```
 
 ---
 

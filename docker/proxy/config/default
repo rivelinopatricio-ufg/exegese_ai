@@ -14,8 +14,9 @@ server {
 
 # HTTPS Block: SWAG-managed TLS termination and Spring Boot upstream
 server {
-    listen 443 ssl http2 default_server;
-    listen [::]:443 ssl http2 default_server;
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    http2 on;
 
     server_name _;
 
@@ -67,3 +68,8 @@ server {
         proxy_set_header X-Forwarded-Port 443;
     }
 }
+
+# enable subdomain method reverse proxy confs
+include /config/nginx/proxy-confs/*.subdomain.conf;
+# enable proxy cache for auth
+proxy_cache_path cache/ keys_zone=auth_cache:10m;

@@ -82,10 +82,11 @@ services:
     cap_add:
       - NET_ADMIN
     ports:
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
+      - "${HTTP_PORT:-80}:${HTTP_PORT:-80}"
+      - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}"
     volumes:
       - proxy_config:/config
+      - ./docker/proxy/config/default:/config/nginx/site-confs/default
     depends_on:
       app:
         condition: service_healthy
