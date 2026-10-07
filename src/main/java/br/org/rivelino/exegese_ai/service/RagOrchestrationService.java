@@ -324,7 +324,7 @@ public class RagOrchestrationService {
     }
 
     private void emitToken(SseEmitter emitter, String token) throws IOException {
-        emitter.send(SseEmitter.event().name("token").data(token));
+        emitter.send(SseEmitter.event().name("token").data(objectMapper.writeValueAsString(token)));
     }
 
     private void emitEvent(SseEmitter emitter, String eventName, String data) throws IOException {

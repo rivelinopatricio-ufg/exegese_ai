@@ -403,7 +403,11 @@
 
             eventSource.addEventListener('token', function (event) {
                 cursor.remove();
-                contentSpan.appendChild(document.createTextNode(event.data));
+                let text = event.data;
+                try {
+                    text = JSON.parse(event.data);
+                } catch (_) {}
+                contentSpan.appendChild(document.createTextNode(text));
                 contentSpan.appendChild(cursor);
                 container.scrollTop = container.scrollHeight;
             });
