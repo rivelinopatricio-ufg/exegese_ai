@@ -70,4 +70,10 @@ public class SecurityContextFacade {
     public boolean isAdmin() {
         return getCurrentUser().map(user -> user.getRole() == UserRole.ROLE_ADMIN).orElse(false);
     }
+
+    public boolean isOperatorOrAdmin() {
+        return getCurrentUser()
+                .map(user -> user.getRole() == UserRole.ROLE_ADMIN || user.getRole() == UserRole.ROLE_OPERATOR)
+                .orElse(false);
+    }
 }

@@ -35,6 +35,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -191,7 +192,13 @@ public class DocumentIngestionService {
             doc = documentRepository.save(doc);
             log.info("Successfully indexed document '{}' with {} total chunks", title, rawChunks.size());
             return doc;
-        } catch (Exception e) {
+        } catch (DataAccessException e) {
+            log.error("Database failure while processing chunks for document '{}': {}", title, e.getMessage(), e);
+            doc.setStatus("FAILED");
+            doc.setErrorMessage(e.getMessage());
+            documentRepository.save(doc);
+            throw new IllegalStateException("Chunk indexing failed for document: " + title, e);
+        } catch (RuntimeException e) {
             log.error("Failed to process chunks for document '{}': {}", title, e.getMessage(), e);
             doc.setStatus("FAILED");
             doc.setErrorMessage(e.getMessage());

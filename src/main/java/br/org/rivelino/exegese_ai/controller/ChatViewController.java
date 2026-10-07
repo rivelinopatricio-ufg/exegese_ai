@@ -114,6 +114,7 @@ public class ChatViewController {
         model.addAttribute("messages", messages);
         model.addAttribute("subjects", subjects);
         model.addAttribute("isAdmin", securityContextFacade.isAdmin());
+        model.addAttribute("canAccessAdmin", securityContextFacade.isOperatorOrAdmin());
 
         return "index";
     }

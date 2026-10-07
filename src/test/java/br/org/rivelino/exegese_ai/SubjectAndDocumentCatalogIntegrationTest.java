@@ -23,21 +23,30 @@ import br.org.rivelino.exegese_ai.domain.entity.ExegeseDocument;
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseSubject;
 import br.org.rivelino.exegese_ai.repository.ExegeseDocumentRepository;
 import br.org.rivelino.exegese_ai.repository.ExegeseSubjectRepository;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -115,5 +124,62 @@ class SubjectAndDocumentCatalogIntegrationTest {
 
         mockMvc.perform(get("/admin/documents"))
             .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(roles = "OPERATOR")
+    @DisplayName("Operator uploads and indexes PDF document via multipart POST")
+    void testUploadDocument() throws Exception {
+        ExegeseSubject subject = subjectRepository.save(
+            new ExegeseSubject("upload-test", "Assunto Teste Upload", "Descrição do assunto")
+        );
+
+        byte[] pdfBytes = createSamplePdf("001 — O que é o teste de upload no RAG?\nConteúdo explicativo da resposta.");
+        MockMultipartFile file = new MockMultipartFile(
+            "file",
+            "manual_upload_teste.pdf",
+            "application/pdf",
+            pdfBytes
+        );
+
+        mockMvc.perform(multipart("/admin/documents/upload")
+                .file(file)
+                .param("title", "Manual de Teste Upload")
+                .param("subjectIds", subject.getId().toString())
+                .param("strategy", "STRUCTURED_QA")
+                .with(csrf()))
+            .andExpect(status().is3xxRedirection())
+            .andExpect(redirectedUrl("/admin/documents"));
+
+        Optional<ExegeseDocument> found = documentRepository.findAll().stream()
+            .filter(d -> "Manual de Teste Upload".equals(d.getTitle()))
+            .findFirst();
+
+        assertThat(found).isPresent();
+        assertThat(found.get().getStatus()).isEqualTo("INDEXED");
+    }
+
+    private byte[] createSamplePdf(String text) throws IOException {
+        try (PDDocument document = new PDDocument()) {
+            PDPage page = new PDPage();
+            document.addPage(page);
+
+            try (PDPageContentStream contentStream = new PDPageContentStream(document, page)) {
+                contentStream.beginText();
+                contentStream.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+                contentStream.newLineAtOffset(50, 700);
+
+                String[] lines = text.split("\n");
+                for (String line : lines) {
+                    contentStream.showText(line.trim());
+                    contentStream.newLineAtOffset(0, -15);
+                }
+                contentStream.endText();
+            }
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            document.save(baos);
+            return baos.toByteArray();
+        }
     }
 }

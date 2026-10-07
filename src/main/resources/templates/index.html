@@ -62,9 +62,9 @@
                 </button>
             </form>
 
-            <!-- Painel Admin -->
-            <div th:if="${isAdmin}" class="flex gap-2">
-                <a th:href="@{/admin/users}" class="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:text-sky-600 dark:hover:text-sky-400 text-slate-700 dark:text-slate-300 text-xs font-medium transition shadow-sm">
+            <!-- Painel Admin / Gestão -->
+            <div th:if="${canAccessAdmin}" class="flex gap-2">
+                <a th:href="${isAdmin} ? @{/admin/users} : @{/admin/documents}" class="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:text-sky-600 dark:hover:text-sky-400 text-slate-700 dark:text-slate-300 text-xs font-medium transition shadow-sm">
                     Painel Admin
                 </a>
             </div>

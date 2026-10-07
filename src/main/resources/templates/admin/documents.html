@@ -91,83 +91,145 @@
         </div>
     </header>
 
-    <!-- Main Content Card -->
-    <main class="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-xl border border-slate-200 dark:border-slate-700 transition-colors">
-        <!-- Header & Filtros -->
-        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 pb-5 border-b border-slate-200 dark:border-slate-700/80">
-            <div>
-                <h2 class="text-xl font-bold text-slate-900 dark:text-white">Catálogo Geral de Documentos</h2>
-                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Monitoramento do Acervo Normativo e Status de Indexação RAG</p>
+    <!-- Feedback Alerts -->
+    <div th:if="${successMessage}" class="mb-6 p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-sm flex items-center justify-between shadow-sm">
+        <div class="flex items-center gap-2">
+            <span>✅</span>
+            <span th:text="${successMessage}">Operação realizada com sucesso!</span>
+        </div>
+        <button onclick="this.parentElement.remove()" class="text-emerald-600 dark:text-emerald-400 font-bold hover:opacity-75">✕</button>
+    </div>
+    <div th:if="${errorMessage}" class="mb-6 p-4 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 text-sm flex items-center justify-between shadow-sm">
+        <div class="flex items-center gap-2">
+            <span>⚠️</span>
+            <span th:text="${errorMessage}">Ocorreu um erro no processamento.</span>
+        </div>
+        <button onclick="this.parentElement.remove()" class="text-red-600 dark:text-red-400 font-bold hover:opacity-75">✕</button>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <!-- Formulário de Upload de Documento -->
+        <div class="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-xl border border-slate-200 dark:border-slate-700 h-fit transition-colors">
+            <div class="mb-5 pb-3 border-b border-slate-200 dark:border-slate-700/80">
+                <h2 class="text-lg font-bold text-slate-900 dark:text-white">Upload de Documento</h2>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Enviar PDF para extração e indexação semântica RAG</p>
             </div>
-
-            <!-- Filtro Dinâmico -->
-            <form th:action="@{/admin/documents}" method="get" class="flex flex-wrap gap-2.5 items-center">
-                <select name="subjectId" class="bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-sky-500 shadow-sm">
-                    <option value="">Todos os Assuntos</option>
-                    <option th:each="sub : ${subjects}" th:value="${sub.id}" th:text="${sub.name}"
-                            th:selected="${selectedSubjectId != null and selectedSubjectId == sub.id}">Assunto</option>
-                </select>
-
-                <select name="status" class="bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-sky-500 shadow-sm">
-                    <option value="">Todos os Status</option>
-                    <option value="UPLOADED" th:selected="${selectedStatus == 'UPLOADED'}">UPLOADED</option>
-                    <option value="PROCESSING" th:selected="${selectedStatus == 'PROCESSING'}">PROCESSING</option>
-                    <option value="INDEXED" th:selected="${selectedStatus == 'INDEXED'}">INDEXED</option>
-                    <option value="ERROR" th:selected="${selectedStatus == 'ERROR'}">ERROR</option>
-                </select>
-
-                <button type="submit" class="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-medium shadow-sm transition">
-                    Filtrar
+            <form th:action="@{/admin/documents/upload}" method="post" enctype="multipart/form-data" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Arquivo PDF *</label>
+                    <input type="file" name="file" accept=".pdf,application/pdf" required
+                           class="w-full text-xs text-slate-700 dark:text-slate-300 file:mr-3 file:py-2 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-sky-50 file:text-sky-700 dark:file:bg-sky-950 dark:file:text-sky-300 hover:file:bg-sky-100 border border-slate-300 dark:border-slate-700 rounded-lg p-2 bg-slate-50 dark:bg-slate-900 shadow-sm cursor-pointer">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Título do Documento</label>
+                    <input type="text" name="title" placeholder="ex: Manual IRPF 2026 - P&R"
+                           class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg p-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-sky-500 shadow-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Estratégia de Segmentação</label>
+                    <select name="strategy" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg p-2.5 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-sky-500 shadow-sm">
+                        <option value="RECURSIVE">RECURSIVE — Padrão Geral (Textos Normativos)</option>
+                        <option value="STRUCTURED_QA">STRUCTURED_QA — Perguntas e Respostas (IRPF)</option>
+                        <option value="LEGAL_SECTION">LEGAL_SECTION — Artigos e Parágrafos (Leis)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Vincular a Assuntos</label>
+                    <div class="max-h-36 overflow-y-auto space-y-1.5 p-2.5 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-300 dark:border-slate-700 text-xs">
+                        <div th:each="sub : ${subjects}" class="flex items-center gap-2">
+                            <input type="checkbox" name="subjectIds" th:value="${sub.id}" th:id="'sub-' + ${sub.id}"
+                                   class="rounded border-slate-300 text-sky-600 focus:ring-sky-500 cursor-pointer">
+                            <label th:for="'sub-' + ${sub.id}" class="text-slate-800 dark:text-slate-200 cursor-pointer select-none" th:text="${sub.name}">Nome do Assunto</label>
+                        </div>
+                        <div th:if="${#lists.isEmpty(subjects)}" class="text-slate-400 italic">Nenhum assunto ativo cadastrado.</div>
+                    </div>
+                </div>
+                <button type="submit" 
+                        class="w-full py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-medium rounded-lg text-sm transition shadow-md shadow-sky-950/40 flex items-center justify-center gap-2">
+                    <span>⬆️</span> Fazer Upload e Indexar RAG
                 </button>
-                <a th:if="${selectedSubjectId != null or selectedStatus != null}" th:href="@{/admin/documents}" class="px-3 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-200 transition">
-                    Limpar
-                </a>
             </form>
         </div>
 
         <!-- Tabela de Documentos -->
-        <div class="overflow-x-auto">
-            <table class="w-full text-left border-collapse text-sm">
-                <thead>
-                    <tr class="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/70 text-slate-600 dark:text-slate-400 text-xs uppercase tracking-wider font-semibold">
-                        <th class="py-3 px-4">Documento</th>
-                        <th class="py-3 px-4">Assuntos Vinculados (Tags)</th>
-                        <th class="py-3 px-4">Páginas</th>
-                        <th class="py-3 px-4">Estratégia</th>
-                        <th class="py-3 px-4">Status</th>
-                        <th class="py-3 px-4">Data Envio</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-100 dark:divide-slate-700/50">
-                    <tr th:if="${#lists.isEmpty(documents)}">
-                        <td colspan="6" class="py-10 text-center text-slate-500 dark:text-slate-400">
-                            Nenhum documento cadastrado no catálogo com os filtros informados.
-                        </td>
-                    </tr>
-                    <tr th:each="doc : ${documents}" class="hover:bg-slate-50 dark:hover:bg-slate-750 transition">
-                        <td class="py-3.5 px-4">
-                            <div class="font-medium text-slate-900 dark:text-white" th:text="${doc.title}">Título</div>
-                            <div class="text-xs text-slate-500 dark:text-slate-400 font-mono" th:text="${doc.originalFileName}">arquivo.pdf</div>
-                        </td>
-                        <td class="py-3.5 px-4">
-                            <div class="flex flex-wrap gap-1">
-                                <span th:each="tag : ${doc.subjectNames}"
-                                      class="px-2 py-0.5 text-xs rounded-full bg-sky-100 text-sky-800 border border-sky-200 dark:bg-sky-950 dark:border-sky-800 dark:text-sky-300 font-medium"
-                                      th:text="${tag}">Assunto</span>
-                            </div>
-                        </td>
-                        <td class="py-3.5 px-4 text-xs font-mono text-slate-700 dark:text-slate-300" th:text="${doc.totalPages}">1</td>
-                        <td class="py-3.5 px-4 text-xs font-mono text-slate-500 dark:text-slate-400" th:text="${doc.segmentationStrategy}">STRUCTURED_QA</td>
-                        <td class="py-3.5 px-4">
-                            <span th:class="${doc.status == 'INDEXED' ? 'px-2.5 py-1 text-xs rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/60 dark:text-emerald-200 dark:border-emerald-700 font-semibold' : (doc.status == 'ERROR' ? 'px-2.5 py-1 text-xs rounded-full bg-red-100 text-red-700 border border-red-200 dark:bg-red-900/60 dark:text-red-200 dark:border-red-700 font-semibold' : 'px-2.5 py-1 text-xs rounded-full bg-amber-100 text-amber-700 border border-amber-200 dark:bg-amber-900/60 dark:text-amber-200 dark:border-amber-700 font-semibold')}"
-                                  th:text="${doc.status}">INDEXED</span>
-                        </td>
-                        <td class="py-3.5 px-4 text-xs text-slate-500 dark:text-slate-400" th:text="${doc.createdAt}">Data</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-    </main>
+        <main class="lg:col-span-2 bg-white dark:bg-slate-800 rounded-xl p-6 shadow-xl border border-slate-200 dark:border-slate-700 transition-colors">
+            <!-- Header & Filtros -->
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 pb-5 border-b border-slate-200 dark:border-slate-700/80">
+                <div>
+                    <h2 class="text-xl font-bold text-slate-900 dark:text-white">Catálogo de Documentos</h2>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Status de Indexação e Acervo RAG</p>
+                </div>
+
+                <!-- Filtro Dinâmico -->
+                <form th:action="@{/admin/documents}" method="get" class="flex flex-wrap gap-2.5 items-center">
+                    <select name="subjectId" class="bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-sky-500 shadow-sm">
+                        <option value="">Todos os Assuntos</option>
+                        <option th:each="sub : ${subjects}" th:value="${sub.id}" th:text="${sub.name}"
+                                th:selected="${selectedSubjectId != null and selectedSubjectId == sub.id}">Assunto</option>
+                    </select>
+
+                    <select name="status" class="bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-sky-500 shadow-sm">
+                        <option value="">Todos os Status</option>
+                        <option value="UPLOADED" th:selected="${selectedStatus == 'UPLOADED'}">UPLOADED</option>
+                        <option value="PROCESSING" th:selected="${selectedStatus == 'PROCESSING'}">PROCESSING</option>
+                        <option value="INDEXED" th:selected="${selectedStatus == 'INDEXED'}">INDEXED</option>
+                        <option value="FAILED" th:selected="${selectedStatus == 'FAILED'}">FAILED</option>
+                    </select>
+
+                    <button type="submit" class="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-medium shadow-sm transition">
+                        Filtrar
+                    </button>
+                    <a th:if="${selectedSubjectId != null or selectedStatus != null}" th:href="@{/admin/documents}" class="px-3 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-200 transition">
+                        Limpar
+                    </a>
+                </form>
+            </div>
+
+            <!-- Tabela de Documentos -->
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse text-sm">
+                    <thead>
+                        <tr class="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/70 text-slate-600 dark:text-slate-400 text-xs uppercase tracking-wider font-semibold">
+                            <th class="py-3 px-4">Documento</th>
+                            <th class="py-3 px-4">Assuntos Vinculados (Tags)</th>
+                            <th class="py-3 px-4">Páginas</th>
+                            <th class="py-3 px-4">Estratégia</th>
+                            <th class="py-3 px-4">Status</th>
+                            <th class="py-3 px-4">Data Envio</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100 dark:divide-slate-700/50">
+                        <tr th:if="${#lists.isEmpty(documents)}">
+                            <td colspan="6" class="py-10 text-center text-slate-500 dark:text-slate-400">
+                                Nenhum documento cadastrado no catálogo com os filtros informados.
+                            </td>
+                        </tr>
+                        <tr th:each="doc : ${documents}" class="hover:bg-slate-50 dark:hover:bg-slate-750 transition">
+                            <td class="py-3.5 px-4">
+                                <div class="font-medium text-slate-900 dark:text-white" th:text="${doc.title}">Título</div>
+                                <div class="text-xs text-slate-500 dark:text-slate-400 font-mono" th:text="${doc.originalFileName}">arquivo.pdf</div>
+                            </td>
+                            <td class="py-3.5 px-4">
+                                <div class="flex flex-wrap gap-1">
+                                    <span th:each="tag : ${doc.subjectNames}"
+                                          class="px-2 py-0.5 text-xs rounded-full bg-sky-100 text-sky-800 border border-sky-200 dark:bg-sky-950 dark:border-sky-800 dark:text-sky-300 font-medium"
+                                          th:text="${tag}">Assunto</span>
+                                </div>
+                            </td>
+                            <td class="py-3.5 px-4 text-xs font-mono text-slate-700 dark:text-slate-300" th:text="${doc.totalPages}">1</td>
+                            <td class="py-3.5 px-4 text-xs font-mono text-slate-500 dark:text-slate-400" th:text="${doc.segmentationStrategy}">STRUCTURED_QA</td>
+                            <td class="py-3.5 px-4">
+                                <span th:class="${doc.status == 'INDEXED' ? 'px-2.5 py-1 text-xs rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/60 dark:text-emerald-200 dark:border-emerald-700 font-semibold' : (doc.status == 'FAILED' or doc.status == 'ERROR' ? 'px-2.5 py-1 text-xs rounded-full bg-red-100 text-red-700 border border-red-200 dark:bg-red-900/60 dark:text-red-200 dark:border-red-700 font-semibold' : 'px-2.5 py-1 text-xs rounded-full bg-amber-100 text-amber-700 border border-amber-200 dark:bg-amber-900/60 dark:text-amber-200 dark:border-amber-700 font-semibold')}"
+                                      th:text="${doc.status}">INDEXED</span>
+                            </td>
+                            <td class="py-3.5 px-4 text-xs text-slate-500 dark:text-slate-400" th:text="${doc.createdAt}">Data</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </main>
+    </div>
 
     <script>
         function toggleTheme() {

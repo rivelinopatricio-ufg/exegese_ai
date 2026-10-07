@@ -23,6 +23,7 @@ import br.org.rivelino.exegese_ai.domain.dto.SearchResultChunk;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -101,7 +102,7 @@ public class HybridSearchService {
 
     private List<RetrievedChunk> retrieveVectorCandidates(String query, List<UUID> subjectIds) {
         if (!isPostgres) {
-            return fallbackCandidateRetrieval(query, subjectIds, true);
+            return fallbackCandidateRetrieval(query, subjectIds);
         }
 
         try {
@@ -139,15 +140,18 @@ public class HybridSearchService {
                     rs.getString("metadata"),
                     rs.getDouble("distance")
             ));
-        } catch (Exception e) {
+        } catch (DataAccessException e) {
             log.warn("PostgreSQL vector retrieval failed, falling back: {}", e.getMessage());
-            return fallbackCandidateRetrieval(query, subjectIds, true);
+            return fallbackCandidateRetrieval(query, subjectIds);
+        } catch (RuntimeException e) {
+            log.warn("Vector embedding generation or retrieval failed, falling back: {}", e.getMessage());
+            return fallbackCandidateRetrieval(query, subjectIds);
         }
     }
 
     private List<RetrievedChunk> retrieveTextCandidates(String query, List<UUID> subjectIds) {
         if (!isPostgres) {
-            return fallbackCandidateRetrieval(query, subjectIds, false);
+            return fallbackCandidateRetrieval(query, subjectIds);
         }
 
         try {
@@ -185,9 +189,9 @@ public class HybridSearchService {
                     rs.getString("metadata"),
                     rs.getDouble("rank")
             ));
-        } catch (Exception e) {
+        } catch (DataAccessException e) {
             log.warn("PostgreSQL FTS retrieval failed, falling back: {}", e.getMessage());
-            return fallbackCandidateRetrieval(query, subjectIds, false);
+            return fallbackCandidateRetrieval(query, subjectIds);
         }
     }
 
@@ -222,7 +226,7 @@ public class HybridSearchService {
         return false;
     }
 
-    private List<RetrievedChunk> fallbackCandidateRetrieval(String query, List<UUID> subjectIds, boolean isSemantic) {
+    private List<RetrievedChunk> fallbackCandidateRetrieval(String query, List<UUID> subjectIds) {
         StringBuilder sql = new StringBuilder("""
             SELECT DISTINCT c.id, c.document_id, d.title as doc_title, c.title as chunk_title,
                    c.content, c.sequence_number, c.metadata

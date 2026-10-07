@@ -26,6 +26,7 @@ import br.org.rivelino.exegese_ai.domain.entity.ChatMessage;
 import br.org.rivelino.exegese_ai.domain.entity.ChatSession;
 import br.org.rivelino.exegese_ai.repository.ChatMessageRepository;
 import br.org.rivelino.exegese_ai.repository.ChatSessionRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -125,7 +126,7 @@ public class RagOrchestrationService {
 
             // 6. Grounded Answer Synthesis & Streaming
             AiModelConfig activeModel = providerRouter.getDefaultProvider();
-            String fullAnswer = generateGroundedAnswer(userQuestion, chunks);
+            String fullAnswer = generateGroundedAnswer(chunks);
 
             // Stream response tokens
             streamTokens(emitter, fullAnswer);
@@ -138,16 +139,16 @@ public class RagOrchestrationService {
             assistantMessage.setExecutionDurationMs((int) (System.currentTimeMillis() - startTime));
             messageRepository.save(assistantMessage);
 
-        } catch (Exception e) {
+        } catch (IOException | RuntimeException e) {
             log.error("Error during RAG streaming orchestration: {}", e.getMessage(), e);
             try {
                 emitter.send(SseEmitter.event().name("error").data("Erro ao processar consulta: " + e.getMessage()));
-            } catch (IOException ignored) {}
+            } catch (@SuppressWarnings("unused") IOException ignored) {}
             emitter.completeWithError(e);
         }
     }
 
-    private String generateGroundedAnswer(String question, List<SearchResultChunk> chunks) {
+    private String generateGroundedAnswer(List<SearchResultChunk> chunks) {
         SearchResultChunk primary = chunks.get(0);
         StringBuilder sb = new StringBuilder();
         sb.append(primary.content().trim()).append("\n\n");
@@ -173,7 +174,7 @@ public class RagOrchestrationService {
                     if (node.has("questionNumber")) questionNum = node.get("questionNumber").asInt();
                     if (node.has("articleNumber")) articleNum = node.get("articleNumber").asText();
                     if (node.has("legalBasis")) legalBasis = node.get("legalBasis").asText();
-                } catch (Exception ignored) {}
+                } catch (@SuppressWarnings("unused") JsonProcessingException ignored) {}
             }
 
             list.add(new CanonicalCitationDTO(

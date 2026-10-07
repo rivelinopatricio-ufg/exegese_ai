@@ -21,19 +21,25 @@ package br.org.rivelino.exegese_ai.controller;
 
 import br.org.rivelino.exegese_ai.domain.dto.DocumentSummaryDTO;
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseSubject;
+import br.org.rivelino.exegese_ai.domain.enums.SegmentationStrategyType;
+import br.org.rivelino.exegese_ai.service.DocumentIngestionService;
 import br.org.rivelino.exegese_ai.service.SubjectCatalogService;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.UUID;
 
 /**
- * Administrative controller for viewing cataloged documents, statuses and subject associations.
+ * Administrative controller for viewing cataloged documents, statuses and uploading new normative files.
  *
  * @author Rivelino Patrício
  */
@@ -43,9 +49,12 @@ import java.util.UUID;
 public class AdminDocumentController {
 
     private final SubjectCatalogService catalogService;
+    private final DocumentIngestionService ingestionService;
 
-    public AdminDocumentController(SubjectCatalogService catalogService) {
+    public AdminDocumentController(SubjectCatalogService catalogService,
+                                   DocumentIngestionService ingestionService) {
         this.catalogService = catalogService;
+        this.ingestionService = ingestionService;
     }
 
     @GetMapping
@@ -61,5 +70,27 @@ public class AdminDocumentController {
         model.addAttribute("selectedStatus", status);
 
         return "admin/documents";
+    }
+
+    @PostMapping("/upload")
+    public String uploadDocument(@RequestParam("file") MultipartFile file,
+                                 @RequestParam(value = "title", required = false) String title,
+                                 @RequestParam(value = "subjectIds", required = false) List<UUID> subjectIds,
+                                 @RequestParam(value = "strategy", defaultValue = "RECURSIVE") SegmentationStrategyType strategy,
+                                 RedirectAttributes redirectAttributes) {
+        if (file.isEmpty()) {
+            redirectAttributes.addFlashAttribute("errorMessage", "Selecione um arquivo PDF válido para upload.");
+            return "redirect:/admin/documents";
+        }
+
+        try {
+            String docTitle = (title != null && !title.isBlank()) ? title.trim() : file.getOriginalFilename();
+            ingestionService.ingestDocument(docTitle, file.getOriginalFilename(), file.getInputStream(), subjectIds, strategy);
+            redirectAttributes.addFlashAttribute("successMessage", "Documento '" + docTitle + "' enviado e indexado com sucesso!");
+        } catch (IOException | RuntimeException e) {
+            redirectAttributes.addFlashAttribute("errorMessage", "Falha na ingestão do documento: " + e.getMessage());
+        }
+
+        return "redirect:/admin/documents";
     }
 }

@@ -97,4 +97,13 @@ class SecurityIntegrationTest {
         ExegeseUser standardUser = userService.syncGoogleUser("outro@exegese.ai", "Outro Usuário", null);
         assertThat(standardUser.getRole()).isEqualTo(UserRole.ROLE_USER);
     }
+
+    @Test
+    @WithMockUser(username = "user@exegese.ai", roles = {"USER"})
+    @DisplayName("GET /logout terminates session and redirects to /login?logout")
+    void testLogoutViaGetRedirectsToLogin() throws Exception {
+        mockMvc.perform(get("/logout"))
+            .andExpect(status().is3xxRedirection())
+            .andExpect(redirectedUrl("/login?logout"));
+    }
 }
