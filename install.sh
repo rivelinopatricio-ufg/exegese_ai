@@ -35,6 +35,7 @@ INITIAL_ADMIN_EMAIL=""
 GEMINI_API_KEY=""
 OPENAI_API_KEY=""
 ANTHROPIC_API_KEY=""
+CEREBRAS_API_KEY=""
 
 log_info() {
     echo -e "${CLR_BLUE}[INFO]${CLR_RESET} $1"
@@ -84,6 +85,7 @@ print_help() {
     echo "  --gemini-key <key>             Google Gemini API Key."
     echo "  --openai-key <key>             OpenAI API Key."
     echo "  --anthropic-key <key>          Anthropic Claude API Key."
+    echo "  --cerebras-key <key>           Cerebras Inference API Key (cerebras.api-key)."
     echo "  --no-ingest                    Start platform without triggering initial document ingestion."
     echo "  --uninstall                    Stop containers, remove persistent volumes, and delete .env."
     echo ""
@@ -150,6 +152,10 @@ parse_arguments() {
                 ;;
             --anthropic-key)
                 ANTHROPIC_API_KEY="$2"
+                shift 2
+                ;;
+            --cerebras-key)
+                CEREBRAS_API_KEY="$2"
                 shift 2
                 ;;
             *)
@@ -233,6 +239,9 @@ configure_environment() {
         read -rp "Do you want to reconfigure environment variables? (y/N): " reconf
         if [[ ! "$reconf" =~ ^[yY]$ ]]; then
             log_info "Using existing configuration from .env."
+            if [[ -z "$HTTPS_PORT" ]]; then
+                HTTPS_PORT=$(grep -E '^HTTPS_PORT=' .env | cut -d '=' -f2- || echo "443")
+            fi
             return 0
         fi
     fi
@@ -349,6 +358,10 @@ configure_environment() {
         read -rsp "Anthropic Claude API Key (Press Enter to skip): " ANTHROPIC_API_KEY
         echo ""
     fi
+    if [[ -z "$CEREBRAS_API_KEY" ]]; then
+        read -rsp "Cerebras Inference API Key (cerebras.api-key - Press Enter to skip): " CEREBRAS_API_KEY
+        echo ""
+    fi
 
     local AES_SECRET
     AES_SECRET=$(generate_random_secret)
@@ -393,6 +406,7 @@ SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_
 GEMINI_API_KEY=${GEMINI_API_KEY}
 OPENAI_API_KEY=${OPENAI_API_KEY}
 ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+CEREBRAS_API_KEY=${CEREBRAS_API_KEY}
 NVIDIA_API_KEY=
 DEEPSEEK_API_KEY=
 OLLAMA_BASE_URL=http://localhost:11434
@@ -402,7 +416,95 @@ EOF
     log_success "File '.env' written with restricted permissions (600)."
 }
 
+configure_nginx_proxy() {
+    local target_https_port="${HTTPS_PORT:-443}"
+    log_info "Configuring NGINX site definition with public HTTPS port (${target_https_port})..."
+
+    local https_redirect_target="https://\$host\$request_uri"
+    local forwarded_port="443"
+
+    if [[ "$target_https_port" != "443" && -n "$target_https_port" ]]; then
+        https_redirect_target="https://\$host:${target_https_port}\$request_uri"
+        forwarded_port="${target_https_port}"
+    fi
+
+    mkdir -p docker/proxy/config
+    cat > docker/proxy/config/default << EOF
+# ==============================================================================
+# Exegese AI - NGINX Site Configuration (Generated dynamically by install.sh)
+# ==============================================================================
+
+# HTTP Block: Automatic redirect to HTTPS
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    server_name _;
+
+    return 301 ${https_redirect_target};
+}
+
+# HTTPS Block: SWAG-managed TLS termination and Spring Boot upstream
+server {
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
+
+    server_name _;
+
+    # Standardized and secure TLS directives managed by SWAG (ciphers, protocols, certs)
+    include /config/nginx/ssl.conf;
+
+    client_max_body_size 10M;
+
+    # 1. SSE Streaming Route for RAG (Mandatory buffering deactivation)
+    location /api/chat/stream {
+        proxy_pass http://app:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_set_header X-Accel-Buffering no;
+
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Port ${forwarded_port};
+    }
+
+    # 2. Manuals and PDF Documents Upload Route (Expanded 50MB limit)
+    location /admin/documents/upload {
+        client_max_body_size 50M;
+        proxy_pass http://app:8080;
+
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Port ${forwarded_port};
+    }
+
+    # 3. General Application Route (Spring Boot Web UI and APIs)
+    location / {
+        proxy_pass http://app:8080;
+
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Port ${forwarded_port};
+    }
+}
+EOF
+    log_success "NGINX configuration dynamically generated for HTTPS port ${target_https_port}."
+}
+
 start_services() {
+    configure_nginx_proxy
     log_info "Building and starting containers via Docker Compose..."
     docker compose up -d --build
     log_success "Containers instantiated successfully."

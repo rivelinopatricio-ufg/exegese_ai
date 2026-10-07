@@ -156,6 +156,7 @@ O instalador suporta execução tanto interativa quanto automatizada (CI/CD / Pr
 | `--gemini-key <key>` | Chave de API do Google Gemini. | - |
 | `--openai-key <key>` | Chave de API da OpenAI. | - |
 | `--anthropic-key <key>` | Chave de API da Anthropic Claude. | - |
+| `--cerebras-key <key>` | Chave de API para o Cerebras Inference (`cerebras.api-key`). | - |
 | `--no-ingest` | Inicia a plataforma sem disparar a ingestão inicial de documentos. | `false` |
 | `--uninstall` | Para os contêineres, remove volumes persistentes e apaga o `.env`. | `false` |
 
