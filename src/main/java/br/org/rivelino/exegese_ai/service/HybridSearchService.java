@@ -113,6 +113,10 @@ public class HybridSearchService {
 
         try {
             float[] embedding = embeddingModel.embed(query);
+            if (isZeroOrInvalidVector(embedding)) {
+                log.info("Vector embedding unavailable or zero-magnitude, proceeding with lexical full-text retrieval");
+                return fallbackCandidateRetrieval(query, subjectIds);
+            }
             String vectorStr = formatVector(embedding);
 
             StringBuilder sql = new StringBuilder("""
@@ -147,10 +151,12 @@ public class HybridSearchService {
                     rs.getDouble("distance")
             ));
         } catch (DataAccessException e) {
-            log.warn("PostgreSQL vector retrieval failed, falling back: {}", e.getMessage());
+            log.warn("PostgreSQL vector retrieval failed ({}), falling back to lexical search: {}",
+                    e.getClass().getSimpleName(), e.getMessage() != null ? e.getMessage() : "no error message");
             return fallbackCandidateRetrieval(query, subjectIds);
         } catch (RuntimeException e) {
-            log.warn("Vector embedding generation or retrieval failed, falling back: {}", e.getMessage());
+            log.warn("Vector embedding generation failed ({}), falling back to lexical search: {}",
+                    e.getClass().getSimpleName(), e.getMessage() != null ? e.getMessage() : "no error message");
             return fallbackCandidateRetrieval(query, subjectIds);
         }
     }
@@ -381,6 +387,18 @@ public class HybridSearchService {
         }
         sb.append("]");
         return sb.toString();
+    }
+
+    private boolean isZeroOrInvalidVector(float[] vector) {
+        if (vector == null || vector.length == 0) {
+            return true;
+        }
+        for (float val : vector) {
+            if (val != 0.0f) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private record RetrievedChunk(

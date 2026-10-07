@@ -28,6 +28,7 @@ import org.springframework.ai.embedding.EmbeddingResponse;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 /**
  * Configuration for vector store and fallback embedding model.
@@ -38,7 +39,7 @@ import org.springframework.context.annotation.Configuration;
 public class VectorStoreConfiguration {
 
     @Bean
-    @org.springframework.context.annotation.Primary
+    @Primary
     @ConditionalOnMissingBean(EmbeddingModel.class) EmbeddingModel fallbackEmbeddingModel() {
         return new EmbeddingModel() {
             @Override
@@ -49,6 +50,16 @@ public class VectorStoreConfiguration {
             @Override
             public float[] embed(Document document) {
                 return new float[768];
+            }
+
+            @Override
+            public float[] embed(String text) {
+                return new float[768];
+            }
+
+            @Override
+            public int dimensions() {
+                return 768;
             }
         };
     }
