@@ -45,12 +45,14 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.awaitility.Awaitility.await;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -64,8 +66,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Integration tests for embedding administration (T1): ingestion without a working embedding provider keeps
  * the document as FAILED with no chunk stored, and the CSRF-protected, role-restricted "reindex embeddings"
- * action. Not transactional: the FAILED status must survive the ingestion transaction, so rows created here
- * are removed explicitly.
+ * action. Not transactional: the FAILED status must survive the ingestion transaction and uploads are indexed
+ * by a background thread, so rows created here are removed explicitly.
  *
  * @author Rivelino Patrício
  */
@@ -132,18 +134,27 @@ class EmbeddingAdministrationIntegrationTest {
 
     @Test
     @WithMockUser(username = "embedding.operator@exegese.test", roles = "OPERATOR")
-    @DisplayName("Upload without embeddings shows the localized 'configure GEMINI_API_KEY' error")
+    @DisplayName("Upload without embeddings is accepted, then listed as FAILED with the 'configure GEMINI_API_KEY' hint")
     void testUploadShowsEmbeddingUnavailableMessage() throws Exception {
         byte[] pdf = createPdf("001 — Upload sem embeddings\nTexto do upload sem embeddings.");
-        createdHashes.add(cryptoService.sha256(pdf));
+        String hash = cryptoService.sha256(pdf);
+        createdHashes.add(hash);
         fakeEmbeddingModel.setUnavailable(true);
 
+        // The upload only stores and registers the file; indexing runs in the background
         mockMvc.perform(multipart("/admin/documents/upload")
                         .file(new MockMultipartFile("file", "upload.pdf", "application/pdf", pdf))
                         .param("strategy", "STRUCTURED_QA")
                         .with(csrf()))
                 .andExpect(redirectedUrl("/admin/documents"))
-                .andExpect(flash().attribute("errorMessage", containsString("GEMINI_API_KEY")));
+                .andExpect(flash().attributeExists("successMessage"));
+
+        await().atMost(Duration.ofSeconds(20)).until(() -> documentRepository.findByFileHashSha256(hash)
+                .map(ExegeseDocument::getStatus).filter("FAILED"::equals).isPresent());
+
+        mockMvc.perform(get("/admin/documents"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("GEMINI_API_KEY")));
     }
 
     @Test

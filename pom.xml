@@ -74,6 +74,16 @@
       <scope>runtime</scope>
     </dependency>
 
+    <!-- Flyway database migrations (src/main/resources/db/migration): the only owner of the schema DDL -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-flyway</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+
     <!-- Apache PDFBox for parsing documents and normative collections -->
     <dependency>
       <groupId>org.apache.pdfbox</groupId>
@@ -115,6 +125,11 @@
     <dependency>
       <groupId>org.springframework.security</groupId>
       <artifactId>spring-security-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-testcontainers</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>

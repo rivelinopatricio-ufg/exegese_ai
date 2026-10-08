@@ -15,9 +15,10 @@ services:
     # No published ports: the database is reachable only by the app on the internal exegese-net network.
     # Docker-published ports bypass host firewalls such as UFW. For local maintenance use:
     #   docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+    # The schema is created and migrated by the app (Flyway, src/main/resources/db/migration); the database
+    # user created by the image (POSTGRES_USER) is a superuser, so V1 can also create the pgvector extension.
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./docker/postgres/init-schema.sql:/docker-entrypoint-initdb.d/01-init-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
@@ -35,7 +36,8 @@ services:
       dockerfile: Dockerfile
     # Port 8080 is isolated on the internal network exegese-net and exposed only to the proxy
     environment:
-      SPRING_PROFILES_ACTIVE: local
+      # Production profile (src/main/resources/application-prod.properties)
+      SPRING_PROFILES_ACTIVE: prod
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-exegese_db}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:?POSTGRES_USER must be set in .env (run ./install.sh)}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env (run ./install.sh)}
@@ -57,6 +59,8 @@ services:
       OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-llama3.2}
       # Base64 of 32 random bytes (openssl rand -base64 32); the app refuses to start without it
       EXEGESE_AES_SECRET: ${EXEGESE_AES_SECRET:?EXEGESE_AES_SECRET must be set in .env (openssl rand -base64 32)}
+      # Original uploaded PDFs (<sha256>.pdf), kept for asynchronous ingestion and re-ingestion
+      UPLOAD_DIR: /app/uploads
     volumes:
       - storage_data:/app/storage
       - upload_data:/app/uploads

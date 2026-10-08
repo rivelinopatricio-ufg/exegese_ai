@@ -23,6 +23,8 @@ import br.org.rivelino.exegese_ai.domain.entity.ExegeseDocument;
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseSubject;
 import br.org.rivelino.exegese_ai.repository.ExegeseDocumentRepository;
 import br.org.rivelino.exegese_ai.repository.ExegeseSubjectRepository;
+import br.org.rivelino.exegese_ai.service.CryptoService;
+import br.org.rivelino.exegese_ai.service.DocumentStorageService;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
@@ -72,6 +74,12 @@ class SubjectAndDocumentCatalogIntegrationTest {
 
     @Autowired
     private ExegeseDocumentRepository documentRepository;
+
+    @Autowired
+    private CryptoService cryptoService;
+
+    @Autowired
+    private DocumentStorageService storageService;
 
     @Test
     @WithMockUser(roles = "ADMIN")
@@ -130,7 +138,7 @@ class SubjectAndDocumentCatalogIntegrationTest {
 
     @Test
     @WithMockUser(roles = "OPERATOR")
-    @DisplayName("Operator uploads and indexes PDF document via multipart POST")
+    @DisplayName("Operator uploads a PDF via multipart POST: it is stored and registered as PROCESSING")
     void testUploadDocument() throws Exception {
         ExegeseSubject subject = subjectRepository.save(
             new ExegeseSubject("upload-test", "Assunto Teste Upload", "Descrição do assunto")
@@ -157,8 +165,14 @@ class SubjectAndDocumentCatalogIntegrationTest {
             .filter(d -> "Manual de Teste Upload".equals(d.getTitle()))
             .findFirst();
 
+        // Ingestion is asynchronous and only starts after the upload commits; this test transaction is rolled
+        // back, so the document stays PROCESSING here (DocumentUploadIngestionIntegrationTest covers indexing)
         assertThat(found).isPresent();
-        assertThat(found.get().getStatus()).isEqualTo("INDEXED");
+        assertThat(found.get().getStatus()).isEqualTo("PROCESSING");
+        String sha256 = cryptoService.sha256(pdfBytes);
+        assertThat(found.get().getFileHashSha256()).isEqualTo(sha256);
+        assertThat(found.get().getStoragePath()).isEqualTo(sha256 + ".pdf");
+        assertThat(storageService.uploadDir().resolve(sha256 + ".pdf")).exists().hasBinaryContent(pdfBytes);
     }
 
     @Test

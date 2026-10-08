@@ -1,12 +1,18 @@
 -- ==============================================================================
--- EXEGESE AI - SCHEMA DEFINITION (PostgreSQL 17 + pgvector)
+-- EXEGESE AI - V1 BASELINE SCHEMA (PostgreSQL 17 + pgvector)
+-- Flyway owns the schema: Hibernate runs with ddl-auto=none and docker/postgres/init-schema.sql only
+-- creates the extensions. This script is the schema of docker/postgres/init-schema.sql reconciled with the
+-- JPA entities (NOT NULL audit columns, nullable embedding for the reindex job).
+--
+-- Databases created before Flyway (by init-schema.sql and/or Hibernate ddl-auto=update) are baselined at
+-- version 1 (spring.flyway.baseline-on-migrate=true, baseline-version=1): they skip this script and only run
+-- V2+, which are therefore written to be idempotent.
 -- ==============================================================================
 
--- Habilitação das extensões necessárias
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "vector";
 
--- 1. Tabela de Usuários (Sincronizada via Google OAuth2)
+-- 1. Users (synchronized from Google OAuth2 / OIDC)
 CREATE TABLE IF NOT EXISTS exegese_user (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email VARCHAR(255) NOT NULL UNIQUE,
@@ -14,30 +20,30 @@ CREATE TABLE IF NOT EXISTS exegese_user (
     avatar_url VARCHAR(500),
     role VARCHAR(50) NOT NULL DEFAULT 'ROLE_USER',
     active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_login_at TIMESTAMP WITH TIME ZONE
 );
 
--- 2. Tabela de Assuntos / Temas (Agrupamento de documentos)
+-- 2. Subjects (thematic grouping of documents)
 CREATE TABLE IF NOT EXISTS exegese_subject (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     code VARCHAR(64) NOT NULL UNIQUE,
     name VARCHAR(255) NOT NULL,
     description TEXT,
     active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 3. Tabela de Permissões de Usuários por Assunto (RBAC Granular)
+-- 3. Organizational user/subject assignments (not a search filter: active subjects are public)
 CREATE TABLE IF NOT EXISTS user_subject_permission (
     user_id UUID NOT NULL REFERENCES exegese_user(id) ON DELETE CASCADE,
     subject_id UUID NOT NULL REFERENCES exegese_subject(id) ON DELETE CASCADE,
     permission_level VARCHAR(50) NOT NULL DEFAULT 'READ',
-    granted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    granted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, subject_id)
 );
 
--- 4. Tabela de Documentos
+-- 4. Documents (storage_path is relative to exegese.upload-dir: <sha256>.pdf)
 CREATE TABLE IF NOT EXISTS exegese_document (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     title VARCHAR(255) NOT NULL,
@@ -50,11 +56,11 @@ CREATE TABLE IF NOT EXISTS exegese_document (
     segmentation_strategy VARCHAR(50) NOT NULL DEFAULT 'STRUCTURED_QA',
     status VARCHAR(50) NOT NULL DEFAULT 'UPLOADED',
     error_message TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 5. Tabela de Associação N:N entre Documentos e Assuntos
+-- 5. Document <-> subject (N:N)
 CREATE TABLE IF NOT EXISTS document_subject (
     document_id UUID NOT NULL REFERENCES exegese_document(id) ON DELETE CASCADE,
     subject_id UUID NOT NULL REFERENCES exegese_subject(id) ON DELETE CASCADE,
@@ -62,7 +68,8 @@ CREATE TABLE IF NOT EXISTS document_subject (
     PRIMARY KEY (document_id, subject_id)
 );
 
--- 6. Tabela Principal de Vetores, Chunks e Busca Textual (pgvector)
+-- 6. Chunks: text, metadata, semantic vector (NULL until computed by ingestion or the reindex job) and the
+--    generated full-text vector. The global UNIQUE on chunk_hash_sha256 is replaced by V2.
 CREATE TABLE IF NOT EXISTS exegese_chunk (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     document_id UUID NOT NULL REFERENCES exegese_document(id) ON DELETE CASCADE,
@@ -70,21 +77,15 @@ CREATE TABLE IF NOT EXISTS exegese_chunk (
     sequence_number INT NOT NULL,
     title VARCHAR(500),
     content TEXT NOT NULL,
-    metadata JSONB NOT NULL,
-    embedding VECTOR(768) NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    embedding VECTOR(768),
     tsv TSVECTOR GENERATED ALWAYS AS (
         to_tsvector('portuguese', coalesce(title, '') || ' ' || content)
     ) STORED,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Garantir colunas vetoriais e textuais caso a tabela tenha sido gerada via JPA/Hibernate
-ALTER TABLE IF EXISTS exegese_chunk ADD COLUMN IF NOT EXISTS embedding VECTOR(768);
-ALTER TABLE IF EXISTS exegese_chunk ADD COLUMN IF NOT EXISTS tsv TSVECTOR GENERATED ALWAYS AS (
-    to_tsvector('portuguese', coalesce(title, '') || ' ' || content)
-) STORED;
-
--- 7. Tabela de Configuração Dinâmica dos Modelos de IA
+-- 7. AI model providers (api_key_encrypted holds "v1:" AES-GCM ciphertext)
 CREATE TABLE IF NOT EXISTS ai_model_config (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     provider VARCHAR(50) NOT NULL UNIQUE,
@@ -96,16 +97,16 @@ CREATE TABLE IF NOT EXISTS ai_model_config (
     is_default BOOLEAN NOT NULL DEFAULT FALSE,
     temperature NUMERIC(3, 2) NOT NULL DEFAULT 0.10,
     max_tokens INT NOT NULL DEFAULT 1024,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 8. Tabelas de Sessão e Mensagens do Chat
+-- 8. Chat sessions and messages
 CREATE TABLE IF NOT EXISTS chat_session (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES exegese_user(id) ON DELETE CASCADE,
     title VARCHAR(255) NOT NULL DEFAULT 'Nova Consulta',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS chat_message (
@@ -117,22 +118,22 @@ CREATE TABLE IF NOT EXISTS chat_message (
     citations JSONB,
     model_used VARCHAR(100),
     execution_duration_ms INT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Índices Especializados
-CREATE INDEX IF NOT EXISTS idx_exegese_chunk_hnsw 
+-- Specialized indexes
+CREATE INDEX IF NOT EXISTS idx_exegese_chunk_hnsw
 ON exegese_chunk USING hnsw (embedding vector_cosine_ops)
 WITH (m = 16, ef_construction = 64);
 
-CREATE INDEX IF NOT EXISTS idx_exegese_chunk_tsv 
+CREATE INDEX IF NOT EXISTS idx_exegese_chunk_tsv
 ON exegese_chunk USING gin (tsv);
 
-CREATE INDEX IF NOT EXISTS idx_exegese_chunk_metadata 
+CREATE INDEX IF NOT EXISTS idx_exegese_chunk_metadata
 ON exegese_chunk USING gin (metadata jsonb_path_ops);
 
-CREATE INDEX IF NOT EXISTS idx_exegese_chunk_doc 
+CREATE INDEX IF NOT EXISTS idx_exegese_chunk_doc
 ON exegese_chunk (document_id);
 
-CREATE INDEX IF NOT EXISTS idx_doc_subject_subject 
+CREATE INDEX IF NOT EXISTS idx_doc_subject_subject
 ON document_subject (subject_id);

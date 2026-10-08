@@ -21,6 +21,7 @@ app_config*
 # Local data & Docker persistent volumes
 /pgdata/
 /ollama_data/
+/uploads/
 *.log
 
 # Java crash logs

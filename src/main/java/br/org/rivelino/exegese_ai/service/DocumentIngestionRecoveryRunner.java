@@ -17,30 +17,37 @@
  *
  * This software uses third-party components, distributed accordingly to their own licenses.
  *******************************************************************************/
-package br.org.rivelino.exegese_ai.domain.dto;
+package br.org.rivelino.exegese_ai.service;
 
-import br.org.rivelino.exegese_ai.domain.enums.SegmentationStrategyType;
-
-import java.time.Instant;
-import java.util.List;
-import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.stereotype.Component;
 
 /**
- * Data transfer record summarizing an ingested document with associated subject tags. The error message is
- * the generic text stored when ingestion failed (never an exception or SQL detail).
+ * On startup, marks documents left in {@code PROCESSING} by a previous run (shutdown or crash while the
+ * background ingestion was running) as {@code FAILED}, so the catalog does not show them as pending forever
+ * and the operator can upload them again.
  *
  * @author Rivelino Patrício
  */
-public record DocumentSummaryDTO(
-    UUID id,
-    String title,
-    String originalFileName,
-    Long fileSize,
-    String fileType,
-    Integer totalPages,
-    SegmentationStrategyType segmentationStrategy,
-    String status,
-    String errorMessage,
-    List<String> subjectNames,
-    Instant createdAt
-) {}
+@Component
+public class DocumentIngestionRecoveryRunner implements ApplicationRunner {
+
+    private static final Logger log = LoggerFactory.getLogger(DocumentIngestionRecoveryRunner.class);
+
+    private final DocumentIngestionService ingestionService;
+
+    public DocumentIngestionRecoveryRunner(DocumentIngestionService ingestionService) {
+        this.ingestionService = ingestionService;
+    }
+
+    @Override
+    public void run(ApplicationArguments args) {
+        int interrupted = ingestionService.failInterruptedIngestions();
+        if (interrupted > 0) {
+            log.warn("{} document(s) were left in PROCESSING by a previous run and are now marked as FAILED", interrupted);
+        }
+    }
+}

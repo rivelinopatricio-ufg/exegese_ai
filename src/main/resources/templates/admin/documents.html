@@ -107,6 +107,14 @@
         <button onclick="this.parentElement.remove()" class="text-red-600 dark:text-red-400 font-bold hover:opacity-75">✕</button>
     </div>
 
+    <div th:if="${processingDocuments}" class="mb-6 p-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 text-sm flex items-center justify-between shadow-sm">
+        <div class="flex items-center gap-2">
+            <span>⏳</span>
+            <span th:text="#{admin.document.status.processing_hint}">Há documentos em processamento em segundo plano.</span>
+        </div>
+        <a th:href="@{/admin/documents}" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-medium shadow-sm transition" th:text="#{admin.document.status.refresh}">Atualizar</a>
+    </div>
+
     <!-- Main Grid -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div class="space-y-8 h-fit">
@@ -250,6 +258,9 @@
                             <td class="py-3.5 px-4">
                                 <span th:class="${doc.status == 'INDEXED' ? 'px-2.5 py-1 text-xs rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/60 dark:text-emerald-200 dark:border-emerald-700 font-semibold' : (doc.status == 'FAILED' or doc.status == 'ERROR' ? 'px-2.5 py-1 text-xs rounded-full bg-red-100 text-red-700 border border-red-200 dark:bg-red-900/60 dark:text-red-200 dark:border-red-700 font-semibold' : 'px-2.5 py-1 text-xs rounded-full bg-amber-100 text-amber-700 border border-amber-200 dark:bg-amber-900/60 dark:text-amber-200 dark:border-amber-700 font-semibold')}"
                                       th:text="${doc.status}">INDEXED</span>
+                                <div th:if="${doc.status == 'FAILED' and doc.errorMessage != null}"
+                                     class="mt-1.5 max-w-xs text-[11px] leading-snug text-red-700 dark:text-red-300 break-words"
+                                     th:text="#{admin.document.status.failure(${doc.errorMessage})}">Falha: detalhe</div>
                             </td>
                             <td class="py-3.5 px-4 text-xs text-slate-500 dark:text-slate-400" th:text="${doc.createdAt}">Data</td>
                         </tr>

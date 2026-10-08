@@ -41,11 +41,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -64,26 +63,24 @@ import static org.awaitility.Awaitility.await;
  * paths that H2 cannot run: embedding reindexing of NULL and legacy zero vectors, cosine vector retrieval
  * with similarity evidence, bounded strict/relaxed full-text retrieval, refusal of out-of-scope questions and
  * vector storage during ingestion. Embeddings come from the deterministic test model (no external API).
+ * The schema is created by the real Flyway migrations and validated against the JPA entities.
  *
  * @author Rivelino Patrício
  */
-@SpringBootTest
+@SpringBootTest(properties = {
+        "spring.datasource.driver-class-name=org.postgresql.Driver",
+        "spring.flyway.enabled=true",
+        "spring.jpa.hibernate.ddl-auto=validate"
+})
 @ActiveProfiles("test")
 @Testcontainers(disabledWithoutDocker = true)
 @DirtiesContext
 class PgVectorHybridSearchContainerTest {
 
     @Container
+    @ServiceConnection
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer(
             DockerImageName.parse("pgvector/pgvector:pg17").asCompatibleSubstituteFor("postgres"));
-
-    @DynamicPropertySource
-    static void datasource(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
-        registry.add("spring.datasource.username", POSTGRES::getUsername);
-        registry.add("spring.datasource.password", POSTGRES::getPassword);
-        registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
-    }
 
     @Autowired
     private HybridSearchService searchService;

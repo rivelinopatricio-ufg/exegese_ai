@@ -52,7 +52,7 @@
   - **Portas e Host Customizáveis**: Permite expor portas alternativas (ex: 8080/8443) caso as portas padrão 80/443 estejam ocupadas no servidor host.
 - **Criptografia Mestra AES-256**: Chaves de API podem ser configuradas no arquivo `.env` ou gerenciadas em tempo real via Painel Administrativo com criptografia simétrica AES-256 no banco de dados.
 - **Configuração Customizada Externa (`app_config`)**: Suporte a injeção e sobrescrita de propriedades de `application.properties` através de arquivo externo `app_config`, mantendo credenciais locais e parâmetros específicos isolados do versionamento Git.
-- **Evolução Automatizada do Modelo de Dados (JPA / Hibernate `update`)**: Esquema relacional mantido em sincronia contínua via `spring.jpa.hibernate.ddl-auto=update` e `spring.jpa.generate-ddl=true`, criando e atualizando tabelas e colunas conforme a evolução das entidades JPA sem perda de dados existentes.
+- **Migrações Versionadas do Banco (Flyway)**: o esquema é criado e evoluído exclusivamente pelas migrações `src/main/resources/db/migration/V*.sql` (Hibernate com `ddl-auto=none`). Bancos criados antes do Flyway (pelo antigo `init-schema.sql` ou pelo `ddl-auto=update`) recebem baseline na versão 1 e executam apenas as migrações idempotentes V2+ na primeira inicialização.
 - **Autenticação Federada Google OAuth2 & RBAC**: Controle granular de acesso baseado em papéis (`ROLE_ADMIN`, `ROLE_OPERATOR`, `ROLE_USER`) com permissões específicas por assunto e bootstrap automático do primeiro administrador via `INITIAL_ADMIN_EMAIL`.
 - **Interface Conversacional Reativa & Acessível**: Chat em tempo real via Server-Sent Events (SSE) com digitação suave e preservação de fronteiras de tokens, chips de citações canônicas clicáveis, modais com fundamentação jurídica completa e alternador de tema Claro / Escuro em conformidade com as diretrizes **WCAG 2.1 AA**.
 
@@ -305,7 +305,7 @@ mvn clean test
 | `DEEPSEEK_API_KEY` | - | Chave de API para DeepSeek AI. |
 | `OLLAMA_BASE_URL` | `http://ollama:11434` | Endpoint do Ollama local (overrides `docker-compose.override.ai*.yml`), acessível só pela rede interna. |
 | `OLLAMA_CHAT_MODEL` | `llama3.2` | Modelo de chat baixado pelo `ollama_init.sh` e usado como padrão do provedor Ollama Local. |
-| `UPLOAD_DIR` | `./uploads` | Diretório de armazenamento físico dos PDFs enviados. |
+| `UPLOAD_DIR` | `./uploads` | Diretório onde os PDFs originais enviados são guardados como `<sha256>.pdf` (no Docker: volume `upload_data` em `/app/uploads`). A indexação roda em segundo plano e o catálogo mostra o status (`PROCESSING`, `INDEXED`, `FAILED`). |
 
 ### 8.1. Arquivo de Configuração Customizada (`app_config`)
 

@@ -52,12 +52,14 @@ public class TestEmbeddingModelConfiguration {
     /**
      * Deterministic bag-of-words embedding: every accent-free word is hashed into one of the dimensions and
      * the vector is L2-normalized, so texts sharing words have a high cosine similarity. A test can make it
-     * behave as an unconfigured provider with {@link #setUnavailable(boolean)} (always restore it).
+     * behave as an unconfigured provider with {@link #setUnavailable(boolean)} or run code while embeddings are
+     * computed with {@link #setBeforeEmbedHook(Runnable)} (always restore both).
      */
     public static class FakeEmbeddingModel implements EmbeddingModel {
 
         private final int dimensions;
         private volatile boolean unavailable;
+        private volatile Runnable beforeEmbedHook;
 
         public FakeEmbeddingModel(int dimensions) {
             this.dimensions = dimensions;
@@ -67,8 +69,20 @@ public class TestEmbeddingModelConfiguration {
             this.unavailable = unavailable;
         }
 
+        /**
+         * Runs {@code hook} at the start of every embedding call (e.g. to simulate a concurrent write between
+         * the computation of the embeddings and the chunk transaction); {@code null} removes it.
+         */
+        public void setBeforeEmbedHook(Runnable hook) {
+            this.beforeEmbedHook = hook;
+        }
+
         @Override
         public EmbeddingResponse call(EmbeddingRequest request) {
+            Runnable hook = beforeEmbedHook;
+            if (hook != null) {
+                hook.run();
+            }
             if (unavailable) {
                 throw EmbeddingException.notConfigured();
             }

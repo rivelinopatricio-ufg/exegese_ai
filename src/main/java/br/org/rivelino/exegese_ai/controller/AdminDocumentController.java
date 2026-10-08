@@ -23,7 +23,8 @@ import br.org.rivelino.exegese_ai.domain.dto.DocumentSummaryDTO;
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseSubject;
 import br.org.rivelino.exegese_ai.domain.enums.SegmentationStrategyType;
 import br.org.rivelino.exegese_ai.service.DocumentIngestionService;
-import br.org.rivelino.exegese_ai.service.EmbeddingException;
+import br.org.rivelino.exegese_ai.service.DocumentRejectedException;
+import br.org.rivelino.exegese_ai.service.DocumentStorageService;
 import br.org.rivelino.exegese_ai.service.EmbeddingReindexService;
 import br.org.rivelino.exegese_ai.service.EmbeddingService;
 import br.org.rivelino.exegese_ai.service.ErrorReference;
@@ -45,12 +46,14 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
 /**
- * Administrative controller for viewing cataloged documents, statuses and uploading new normative files.
+ * Administrative controller for viewing cataloged documents, statuses and uploading new normative files
+ * (uploads are indexed asynchronously; the catalog shows PROCESSING / INDEXED / FAILED).
  * It also starts the background embedding reindexing job (CSRF-protected POST) and shows its progress.
  *
  * @author Rivelino Patrício
@@ -93,10 +96,17 @@ public class AdminDocumentController {
         model.addAttribute("selectedStatus", status);
         model.addAttribute("reindexStatus", reindexService.status());
         model.addAttribute("embeddingConfigured", embeddingService.isConfigured());
+        model.addAttribute("processingDocuments", documents.stream()
+                .anyMatch(doc -> DocumentIngestionService.STATUS_PROCESSING.equals(doc.status())));
 
         return "admin/documents";
     }
 
+    /**
+     * Accepts a PDF upload: the file is validated ({@code %PDF-} signature) and stored, the document is
+     * registered with status {@code PROCESSING} and the request returns immediately; extraction, segmentation
+     * and embeddings run in the background and the catalog shows the resulting status.
+     */
     @PostMapping("/upload")
     public String uploadDocument(@RequestParam("file") MultipartFile file,
                                  @RequestParam(value = "title", required = false) String title,
@@ -112,20 +122,35 @@ public class AdminDocumentController {
             return "redirect:/admin/documents";
         }
 
-        try {
-            String docTitle = (title != null && !title.isBlank()) ? title.trim() : file.getOriginalFilename();
-            ingestionService.ingestDocument(docTitle, file.getOriginalFilename(), file.getInputStream(), subjectIds, strategy);
-            String successMsg = messageSource.getMessage("admin.document.success.uploaded", new Object[]{docTitle}, userLocale);
-            redirectAttributes.addFlashAttribute("successMessage", successMsg);
-        } catch (EmbeddingException e) {
+        if (!embeddingService.isConfigured()) {
+            // Without an embedding provider every ingestion would fail: refuse before storing anything
             String reference = ErrorReference.newReference();
-            log.error("Document ingestion failed: embeddings unavailable [ref={}]: {}", reference, e.getMessage());
-            String key = e.isNotConfigured() ? "admin.document.error.embedding_unavailable" : "admin.document.error.ingestion_failed";
-            redirectAttributes.addFlashAttribute("errorMessage", messageSource.getMessage(key, new Object[]{reference}, userLocale));
+            log.warn("Document upload refused: embeddings unavailable (GEMINI_API_KEY not configured) [ref={}]", reference);
+            redirectAttributes.addFlashAttribute("errorMessage", messageSource.getMessage(
+                    "admin.document.error.embedding_unavailable", new Object[]{reference}, userLocale));
+            return "redirect:/admin/documents";
+        }
+
+        String fileName = DocumentStorageService.sanitizeFileName(file.getOriginalFilename());
+        String docTitle = DocumentStorageService.sanitizeTitle(title, fileName);
+        try (InputStream input = file.getInputStream()) {
+            DocumentIngestionService.UploadOutcome outcome =
+                    ingestionService.submitDocument(docTitle, fileName, input, subjectIds, strategy);
+            String key = switch (outcome.state()) {
+                case QUEUED -> "admin.document.success.queued";
+                case ALREADY_INDEXED -> "admin.document.success.already_indexed";
+                case ALREADY_PROCESSING -> "admin.document.success.already_processing";
+            };
+            redirectAttributes.addFlashAttribute("successMessage",
+                    messageSource.getMessage(key, new Object[]{outcome.document().getTitle()}, userLocale));
+        } catch (DocumentRejectedException e) {
+            log.warn("Document upload rejected: {}", e.getMessage());
+            redirectAttributes.addFlashAttribute("errorMessage",
+                    messageSource.getMessage("admin.document.error.not_pdf", null, userLocale));
         } catch (IOException | RuntimeException e) {
             // The exception detail (SQL, paths, infrastructure) stays in the server log, linked by the reference
             String reference = ErrorReference.newReference();
-            log.error("Document ingestion failed [ref={}]", reference, e);
+            log.error("Document upload failed [ref={}]", reference, e);
             String errorMsg = messageSource.getMessage("admin.document.error.ingestion_failed", new Object[]{reference}, userLocale);
             redirectAttributes.addFlashAttribute("errorMessage", errorMsg);
         }

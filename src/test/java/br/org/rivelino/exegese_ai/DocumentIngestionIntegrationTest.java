@@ -201,6 +201,40 @@ class DocumentIngestionIntegrationTest {
         assertThat(chunksAfterDuplicate).hasSize(2);
     }
 
+    @Test
+    @DisplayName("The same chunk text in two documents is indexed in both (chunk hash unique per document)")
+    void testSameChunkIndexedInTwoDocuments() throws IOException {
+        String sharedQuestion = """
+                001 — O que é rendimento tributável?
+                Rendimento tributável é aquele sujeito à incidência do imposto.
+                """;
+        byte[] firstPdf = createSamplePdf(sharedQuestion + """
+                002 — Quem deve declarar?
+                Quem recebeu rendimentos acima do limite anual.
+                """);
+        byte[] secondPdf = createSamplePdf(sharedQuestion + """
+                003 — Qual o prazo de entrega?
+                A declaração deve ser entregue até o último dia útil de maio.
+                """);
+
+        ExegeseDocument first = ingestionService.ingestDocument("Manual A", "manual_a.pdf", firstPdf,
+                List.of(), SegmentationStrategyType.STRUCTURED_QA);
+        ExegeseDocument second = ingestionService.ingestDocument("Manual B", "manual_b.pdf", secondPdf,
+                List.of(), SegmentationStrategyType.STRUCTURED_QA);
+
+        assertThat(first.getStatus()).isEqualTo("INDEXED");
+        assertThat(second.getStatus()).isEqualTo("INDEXED");
+        List<ExegeseChunk> firstChunks = chunkRepository.findByDocumentIdOrderBySequenceNumberAsc(first.getId());
+        List<ExegeseChunk> secondChunks = chunkRepository.findByDocumentIdOrderBySequenceNumberAsc(second.getId());
+        assertThat(firstChunks).hasSize(2);
+        assertThat(secondChunks).hasSize(2);
+
+        String sharedHash = firstChunks.get(0).getChunkHashSha256();
+        assertThat(secondChunks.get(0).getChunkHashSha256()).isEqualTo(sharedHash);
+        assertThat(chunkRepository.existsByDocumentIdAndChunkHashSha256(first.getId(), sharedHash)).isTrue();
+        assertThat(chunkRepository.existsByDocumentIdAndChunkHashSha256(second.getId(), sharedHash)).isTrue();
+    }
+
     private byte[] createSamplePdf(String text) throws IOException {
         try (PDDocument document = new PDDocument()) {
             PDPage page = new PDPage();

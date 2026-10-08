@@ -21,9 +21,11 @@ package br.org.rivelino.exegese_ai.repository;
 
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseChunk;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -33,9 +35,21 @@ import java.util.UUID;
  */
 public interface ExegeseChunkRepository extends JpaRepository<ExegeseChunk, UUID> {
 
-    Optional<ExegeseChunk> findByChunkHashSha256(String chunkHashSha256);
+    /**
+     * Chunk hashes are unique per document (the same text may be indexed in several documents).
+     */
+    boolean existsByDocumentIdAndChunkHashSha256(UUID documentId, String chunkHashSha256);
 
     List<ExegeseChunk> findByDocumentIdOrderBySequenceNumberAsc(UUID documentId);
 
     long countByDocumentId(UUID documentId);
+
+    /**
+     * Removes every chunk of a document (bulk delete, used before a document is ingested again).
+     *
+     * @return Number of removed chunks
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("DELETE FROM ExegeseChunk c WHERE c.document.id = :documentId")
+    int deleteByDocumentId(@Param("documentId") UUID documentId);
 }
