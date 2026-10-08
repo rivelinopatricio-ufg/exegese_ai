@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}" content="">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}" content="X-CSRF-TOKEN">
     <title>Exegese AI — Assistente Regulatório & Tributário</title>
     <link rel="icon" type="image/png" th:href="@{/images/logo.png}">
     <link rel="stylesheet" th:href="@{/css/app.css}">
@@ -333,8 +335,16 @@
             question: /*[[#{chat.citations.question}]]*/ 'Pergunta',
             defaultLegalBasis: /*[[#{chat.citations.default_legal_basis}]]*/ 'Documento oficial homologado pela Receita Federal do Brasil.',
             themeLight: /*[[#{nav.theme.light}]]*/ 'Claro',
-            themeDark: /*[[#{nav.theme.dark}]]*/ 'Escuro'
+            themeDark: /*[[#{nav.theme.dark}]]*/ 'Escuro',
+            errorRequestFailed: /*[[#{chat.error.request_failed}]]*/ 'Não foi possível enviar sua pergunta.',
+            errorRateLimited: /*[[#{chat.error.rate_limited}]]*/ 'Muitas requisições em pouco tempo.',
+            errorSessionExpired: /*[[#{chat.error.session_expired}]]*/ 'Sua sessão expirou.',
+            errorConnectionLost: /*[[#{chat.error.connection_lost}]]*/ 'A conexão com o servidor foi interrompida.'
         };
+
+        const csrfTokenMeta = document.querySelector('meta[name="_csrf"]');
+        const csrfHeaderMeta = document.querySelector('meta[name="_csrf_header"]');
+        const chatMessagesUrl = /*[[@{/api/chat/messages}]]*/ '/api/chat/messages';
 
         const form = document.getElementById('chat-form');
         const input = document.getElementById('question-input');
@@ -393,13 +403,62 @@
             cursor.className = 'cursor-blink';
             contentSpan.appendChild(cursor);
 
-            // 3. Montar query params para o SSE
-            let url = `/api/chat/stream?sessionId=${sessionId}&question=${encodeURIComponent(question)}`;
-            if (subjectIds.length > 0) {
-                url += `&subjectIds=${subjectIds.join(',')}`;
+            // 3. Passo 1: registrar a pergunta via POST (protegido por CSRF) e obter a URL de streaming
+            const body = new URLSearchParams();
+            body.append('sessionId', sessionId);
+            body.append('question', question);
+            subjectIds.forEach(id => body.append('subjectIds', id));
+
+            const headers = { 'Accept': 'application/json' };
+            if (csrfTokenMeta && csrfHeaderMeta && csrfTokenMeta.content) {
+                headers[csrfHeaderMeta.content] = csrfTokenMeta.content;
             }
 
-            const eventSource = new EventSource(url);
+            fetch(chatMessagesUrl, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: headers,
+                body: body
+            })
+                .then(async function (response) {
+                    if (!response.ok) {
+                        showStreamError(contentSpan, cursor, await resolveRequestError(response));
+                        return;
+                    }
+                    const data = await response.json();
+                    // 4. Passo 2: abrir o stream SSE com o ticket de uso único
+                    openAnswerStream(data.streamUrl, contentSpan, cursor, citationsContainer);
+                })
+                .catch(function () {
+                    showStreamError(contentSpan, cursor, i18n.errorRequestFailed);
+                });
+        });
+
+        async function resolveRequestError(response) {
+            if (response.status === 401 || response.status === 403) {
+                return i18n.errorSessionExpired;
+            }
+            try {
+                const data = await response.json();
+                if (data && typeof data.error === 'string' && data.error) {
+                    return data.error;
+                }
+            } catch (_) {}
+            return response.status === 429 ? i18n.errorRateLimited : i18n.errorRequestFailed;
+        }
+
+        function showStreamError(contentSpan, cursor, message) {
+            cursor.remove();
+            const errorLine = document.createElement('span');
+            errorLine.className = 'block text-red-600 dark:text-red-400';
+            errorLine.textContent = message;
+            contentSpan.appendChild(errorLine);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function openAnswerStream(streamUrl, contentSpan, cursor, citationsContainer) {
+            const eventSource = new EventSource(streamUrl);
+            let finished = false;
 
             eventSource.addEventListener('token', function (event) {
                 cursor.remove();
@@ -431,15 +490,30 @@
             });
 
             eventSource.addEventListener('complete', function () {
+                finished = true;
                 cursor.remove();
                 eventSource.close();
             });
 
-            eventSource.onerror = function () {
-                cursor.remove();
+            // Receives both the server "error" event (generic message + reference) and connection failures
+            eventSource.addEventListener('error', function (event) {
                 eventSource.close();
-            };
-        });
+                if (finished) {
+                    return;
+                }
+                finished = true;
+                let message = i18n.errorConnectionLost;
+                if (event && typeof event.data === 'string' && event.data) {
+                    try {
+                        const payload = JSON.parse(event.data);
+                        if (payload && typeof payload.message === 'string') {
+                            message = payload.message;
+                        }
+                    } catch (_) {}
+                }
+                showStreamError(contentSpan, cursor, message);
+            });
+        }
 
         function appendMessage(role, text) {
             const wrapper = document.createElement('div');

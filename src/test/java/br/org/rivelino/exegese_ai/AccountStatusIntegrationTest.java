@@ -22,9 +22,7 @@ package br.org.rivelino.exegese_ai;
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseUser;
 import br.org.rivelino.exegese_ai.domain.enums.UserRole;
 import br.org.rivelino.exegese_ai.repository.ExegeseUserRepository;
-import br.org.rivelino.exegese_ai.service.RagOrchestrationService;
 import br.org.rivelino.exegese_ai.service.UserService;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,13 +35,14 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Locale;
 import java.util.UUID;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.oidcLogin;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -69,15 +68,6 @@ class AccountStatusIntegrationTest {
     @Autowired
     private UserService userService;
 
-    @Autowired
-    private RagOrchestrationService ragOrchestrationService;
-
-    @AfterEach
-    void resetLocalePrompt() {
-        // ?lang= on the login page still reconfigures the global prompt (A6, handled separately)
-        ragOrchestrationService.configureSystemPromptForLocale(Locale.of("pt", "BR"));
-    }
-
     @Test
     @WithMockUser(username = "desativado@exegese.test", roles = "USER")
     @DisplayName("Session of a deactivated account is invalidated: /login?disabled for pages, 401 for the API")
@@ -90,7 +80,8 @@ class AccountStatusIntegrationTest {
                 .andExpect(status().is3xxRedirection())
                 .andExpect(redirectedUrl("/login?disabled"));
 
-        mockMvc.perform(get("/api/chat/stream")
+        mockMvc.perform(post("/api/chat/messages")
+                        .with(csrf())
                         .param("sessionId", UUID.randomUUID().toString())
                         .param("question", "Pergunta"))
                 .andExpect(status().isUnauthorized());

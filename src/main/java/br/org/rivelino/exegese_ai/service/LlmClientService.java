@@ -104,6 +104,10 @@ public class LlmClientService {
             log.warn("LLM streaming interrupted for provider {}: {}", provider, e.getMessage());
             Thread.currentThread().interrupt();
             return false;
+        } catch (ChatStreamCancelledException e) {
+            // Raised by the token consumer; leaving the lines stream closed the upstream HTTP connection
+            log.debug("LLM streaming for provider {} aborted: client disconnected", provider);
+            return false;
         } catch (RuntimeException e) {
             log.error("Runtime error during LLM streaming for provider {}: {}", provider, e.getMessage(), e);
             return false;

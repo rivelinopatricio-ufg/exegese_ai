@@ -17,31 +17,37 @@
  *
  * This software uses third-party components, distributed accordingly to their own licenses.
  *******************************************************************************/
-package br.org.rivelino.exegese_ai.security;
+package br.org.rivelino.exegese_ai.domain.dto;
 
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
-import org.springframework.stereotype.Component;
-
-import java.io.IOException;
+import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
 
 /**
- * Authentication success handler performing the post-login redirection.
- * The local account is synchronized once, by {@link CustomOidcUserService}, before this handler runs.
- * Login has no global side effect: the RAG system prompt is resolved per request from the user's locale.
+ * Single-use authorization to open the SSE answer stream of a question accepted by
+ * {@code POST /api/chat/messages}. It is bound to the user that submitted the question and carries the
+ * request locale captured in the web thread, so the asynchronous answer never depends on global state.
  *
  * @author Rivelino Patrício
  */
-@Component
-public class GoogleOAuth2SuccessHandler implements AuthenticationSuccessHandler {
+public record ChatStreamTicket(
+        UUID userId,
+        UUID sessionId,
+        String question,
+        List<UUID> subjectIds,
+        Locale locale
+) {
 
+    public ChatStreamTicket {
+        subjectIds = subjectIds == null ? List.of() : List.copyOf(subjectIds);
+    }
+
+    /**
+     * Omits the question text so that an accidental log statement never records it (LGPD).
+     */
     @Override
-    public void onAuthenticationSuccess(HttpServletRequest request,
-                                        HttpServletResponse response,
-                                        Authentication authentication) throws IOException, ServletException {
-        response.sendRedirect(request.getContextPath() + "/");
+    public String toString() {
+        return "ChatStreamTicket[userId=" + userId + ", sessionId=" + sessionId
+                + ", subjects=" + subjectIds.size() + ", locale=" + locale + "]";
     }
 }

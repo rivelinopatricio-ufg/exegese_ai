@@ -32,7 +32,12 @@
 - **Internacionalização Multilíngue Completa (i18n)**:
   - Interface web totalmente traduzida em 3 idiomas: **Português (pt-BR)**, **Inglês (en)** e **Espanhol (es)**.
   - Alternância imediata via seletor de idiomas no cabeçalho ou parâmetro `?lang=`, persistida no cookie `EXEGESE_LOCALE`.
-  - Reconfiguração dinâmica do prompt do sistema (`SPECIALIST_SYSTEM_PROMPT`) para alinhamento normativo, diretrizes analíticas e recusas canônicas no idioma de preferência do operador.
+  - Prompt do sistema (`rag.specialist.system.prompt`) resolvido a cada pergunta no idioma de quem perguntou, sem estado global: a escolha de idioma de um usuário (ou de um visitante na tela de login) não afeta os demais.
+- **Chat em Dois Passos (CSRF + SSE)**:
+  - `POST /api/chat/messages` (com token CSRF) valida a sessão e a pergunta e devolve `{"streamUrl": ...}` com um ticket de uso único (2 min), vinculado ao usuário.
+  - `GET /api/chat/stream/{streamId}` consome o ticket e transmite a resposta por SSE em uma virtual thread dedicada, sem transação aberta durante a geração do LLM.
+  - Limites: 20 requisições/min por conta (ou por IP, quando anônimo) em `/api/**` e até 2 respostas simultâneas por usuário (`exegese.chat.max-concurrent-streams-per-user`). Fechar a aba cancela a geração no provedor.
+  - A pergunta e os trechos recuperados vão ao modelo em seções delimitadas (`<user_question>`, `<official_context>`), tratadas pelo prompt do sistema estritamente como dados. Erros chegam ao cliente apenas como mensagem genérica com código de referência; o detalhe fica no log.
 - **Gestão e Ingestão Dinâmica de Documentos (Upload Multipart)**:
   - Painel administrativo e operacional (`/admin/documents`) com upload direto de arquivos PDF de até 50MB.
   - Hashing criptográfico **SHA-256** (`file_hash_sha256`) garantindo deduplicação estrita e ingestão idempotente sem duplicação de vetores.
@@ -43,7 +48,7 @@
   - **Emissão no Startup**: O próprio proxy solicita o certificado Let's Encrypt na inicialização antes de expor os serviços.
   - **Renovação Automática via Cron**: O processo cron interno do contêiner verifica periodicamente (2x ao dia) e renova silenciosamente os certificados SSL/TLS com recarregamento suave (*reload*) do NGINX.
   - **Isolamento de Aplicação**: A porta 8080 do Spring Boot fica totalmente confinada na rede interna Docker (`exegese-net`).
-  - **Otimização para SSE**: Rota `/api/chat/stream` com `proxy_buffering off;`, `X-Accel-Buffering no;` e timeout de 3600s para streaming contínuo sem bufferização.
+  - **Otimização para SSE**: Rota `/api/chat/stream/{streamId}` com `proxy_buffering off;`, `X-Accel-Buffering no;` e timeout de 3600s para streaming contínuo sem bufferização.
   - **Portas e Host Customizáveis**: Permite expor portas alternativas (ex: 8080/8443) caso as portas padrão 80/443 estejam ocupadas no servidor host.
 - **Criptografia Mestra AES-256**: Chaves de API podem ser configuradas no arquivo `.env` ou gerenciadas em tempo real via Painel Administrativo com criptografia simétrica AES-256 no banco de dados.
 - **Configuração Customizada Externa (`app_config`)**: Suporte a injeção e sobrescrita de propriedades de `application.properties` através de arquivo externo `app_config`, mantendo credenciais locais e parâmetros específicos isolados do versionamento Git.

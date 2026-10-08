@@ -19,29 +19,46 @@
  *******************************************************************************/
 package br.org.rivelino.exegese_ai.security;
 
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
-import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 
 /**
- * Authentication success handler performing the post-login redirection.
- * The local account is synchronized once, by {@link CustomOidcUserService}, before this handler runs.
- * Login has no global side effect: the RAG system prompt is resolved per request from the user's locale.
+ * Writes the small {@code {"error": "..."}} JSON bodies of the security filters, which run before Spring MVC
+ * and therefore cannot rely on its message converters.
  *
  * @author Rivelino Patrício
  */
-@Component
-public class GoogleOAuth2SuccessHandler implements AuthenticationSuccessHandler {
+final class JsonErrorResponse {
 
-    @Override
-    public void onAuthenticationSuccess(HttpServletRequest request,
-                                        HttpServletResponse response,
-                                        Authentication authentication) throws IOException, ServletException {
-        response.sendRedirect(request.getContextPath() + "/");
+    private JsonErrorResponse() {
+    }
+
+    static void write(HttpServletResponse response, int status, String message) throws IOException {
+        response.setStatus(status);
+        response.setContentType("application/json;charset=UTF-8");
+        response.getWriter().write("{\"error\": \"" + escape(message) + "\"}");
+    }
+
+    static String escape(String value) {
+        StringBuilder sb = new StringBuilder(value.length() + 8);
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        return sb.toString();
     }
 }

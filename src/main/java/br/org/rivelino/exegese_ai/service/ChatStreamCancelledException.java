@@ -17,31 +17,17 @@
  *
  * This software uses third-party components, distributed accordingly to their own licenses.
  *******************************************************************************/
-package br.org.rivelino.exegese_ai.security;
-
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
-import org.springframework.stereotype.Component;
-
-import java.io.IOException;
+package br.org.rivelino.exegese_ai.service;
 
 /**
- * Authentication success handler performing the post-login redirection.
- * The local account is synchronized once, by {@link CustomOidcUserService}, before this handler runs.
- * Login has no global side effect: the RAG system prompt is resolved per request from the user's locale.
+ * Thrown from the LLM token consumer when the client went away (SSE completion, timeout or error), so
+ * that the upstream provider stream is closed instead of generating (and billing) an unread answer.
  *
  * @author Rivelino Patrício
  */
-@Component
-public class GoogleOAuth2SuccessHandler implements AuthenticationSuccessHandler {
+public class ChatStreamCancelledException extends RuntimeException {
 
-    @Override
-    public void onAuthenticationSuccess(HttpServletRequest request,
-                                        HttpServletResponse response,
-                                        Authentication authentication) throws IOException, ServletException {
-        response.sendRedirect(request.getContextPath() + "/");
+    public ChatStreamCancelledException() {
+        super("Chat stream cancelled by the client", null, false, false);
     }
 }

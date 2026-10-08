@@ -17,31 +17,32 @@
  *
  * This software uses third-party components, distributed accordingly to their own licenses.
  *******************************************************************************/
-package br.org.rivelino.exegese_ai.security;
+package br.org.rivelino.exegese_ai.service;
 
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
-import org.springframework.stereotype.Component;
-
-import java.io.IOException;
+import java.security.SecureRandom;
+import java.util.HexFormat;
 
 /**
- * Authentication success handler performing the post-login redirection.
- * The local account is synchronized once, by {@link CustomOidcUserService}, before this handler runs.
- * Login has no global side effect: the RAG system prompt is resolved per request from the user's locale.
+ * Generates short correlation identifiers that link a generic error shown to the user with the detailed
+ * entry written to the server log, so that exception messages never have to be sent to the client.
  *
  * @author Rivelino Patrício
  */
-@Component
-public class GoogleOAuth2SuccessHandler implements AuthenticationSuccessHandler {
+public final class ErrorReference {
 
-    @Override
-    public void onAuthenticationSuccess(HttpServletRequest request,
-                                        HttpServletResponse response,
-                                        Authentication authentication) throws IOException, ServletException {
-        response.sendRedirect(request.getContextPath() + "/");
+    private static final SecureRandom RANDOM = new SecureRandom();
+
+    private ErrorReference() {
+    }
+
+    /**
+     * Creates a new reference, e.g. {@code 9F3A61C2}.
+     *
+     * @return Eight upper-case hexadecimal characters
+     */
+    public static String newReference() {
+        byte[] bytes = new byte[4];
+        RANDOM.nextBytes(bytes);
+        return HexFormat.of().withUpperCase().formatHex(bytes);
     }
 }

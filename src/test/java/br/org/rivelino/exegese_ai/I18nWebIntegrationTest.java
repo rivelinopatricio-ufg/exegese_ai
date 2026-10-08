@@ -21,7 +21,6 @@ package br.org.rivelino.exegese_ai;
 
 import br.org.rivelino.exegese_ai.service.RagOrchestrationService;
 import jakarta.servlet.http.Cookie;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -56,11 +55,6 @@ class I18nWebIntegrationTest {
     @Autowired
     private RagOrchestrationService ragOrchestrationService;
 
-    @AfterEach
-    void resetLocalePrompt() {
-        ragOrchestrationService.configureSystemPromptForLocale(Locale.of("pt", "BR"));
-    }
-
     @Test
     @DisplayName("Default locale is Portuguese (pt-BR) when accessing login without language parameter")
     void testDefaultLocaleIsPortuguese() throws Exception {
@@ -81,9 +75,10 @@ class I18nWebIntegrationTest {
                 .andExpect(content().string(containsString("Institutional Access")))
                 .andExpect(content().string(containsString("RAG Platform with Exegetical Rigor")));
 
-        assertThat(RagOrchestrationService.SPECIALIST_SYSTEM_PROMPT)
-                .contains("ZERO HALLUCINATION")
-                .contains("STEP-BY-STEP PRACTICAL GUIDANCE");
+        // An anonymous ?lang= only changes this visitor's cookie: the prompt of every other request is untouched
+        assertThat(ragOrchestrationService.resolveSystemPrompt(Locale.of("pt", "BR")))
+                .contains("ZERO ALUCINAÇÃO")
+                .doesNotContain("ZERO HALLUCINATION");
     }
 
     @Test
@@ -96,9 +91,9 @@ class I18nWebIntegrationTest {
                 .andExpect(content().string(containsString("Acceso Institucional")))
                 .andExpect(content().string(containsString("Plataforma RAG de Rigor Exegético y Fundamentación Normativa")));
 
-        assertThat(RagOrchestrationService.SPECIALIST_SYSTEM_PROMPT)
-                .contains("CERO ALUCINACIÓN")
-                .contains("ORIENTACIÓN PRÁTICA PASO A PASO");
+        assertThat(ragOrchestrationService.resolveSystemPrompt(Locale.of("pt", "BR")))
+                .contains("ZERO ALUCINAÇÃO")
+                .doesNotContain("CERO ALUCINACIÓN");
     }
 
     @Test

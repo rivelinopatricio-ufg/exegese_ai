@@ -23,7 +23,10 @@ import br.org.rivelino.exegese_ai.domain.dto.DocumentSummaryDTO;
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseSubject;
 import br.org.rivelino.exegese_ai.domain.enums.SegmentationStrategyType;
 import br.org.rivelino.exegese_ai.service.DocumentIngestionService;
+import br.org.rivelino.exegese_ai.service.ErrorReference;
 import br.org.rivelino.exegese_ai.service.SubjectCatalogService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.MessageSource;
 import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -52,6 +55,8 @@ import java.util.UUID;
 @RequestMapping("/admin/documents")
 @PreAuthorize("hasAnyRole('ADMIN', 'OPERATOR')")
 public class AdminDocumentController {
+
+    private static final Logger log = LoggerFactory.getLogger(AdminDocumentController.class);
 
     private final SubjectCatalogService catalogService;
     private final DocumentIngestionService ingestionService;
@@ -101,7 +106,10 @@ public class AdminDocumentController {
             String successMsg = messageSource.getMessage("admin.document.success.uploaded", new Object[]{docTitle}, userLocale);
             redirectAttributes.addFlashAttribute("successMessage", successMsg);
         } catch (IOException | RuntimeException e) {
-            String errorMsg = messageSource.getMessage("admin.document.error.ingestion_failed", new Object[]{e.getMessage()}, userLocale);
+            // The exception detail (SQL, paths, infrastructure) stays in the server log, linked by the reference
+            String reference = ErrorReference.newReference();
+            log.error("Document ingestion failed [ref={}]", reference, e);
+            String errorMsg = messageSource.getMessage("admin.document.error.ingestion_failed", new Object[]{reference}, userLocale);
             redirectAttributes.addFlashAttribute("errorMessage", errorMsg);
         }
 
