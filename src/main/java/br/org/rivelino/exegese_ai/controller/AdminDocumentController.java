@@ -23,7 +23,14 @@ import br.org.rivelino.exegese_ai.domain.dto.DocumentSummaryDTO;
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseSubject;
 import br.org.rivelino.exegese_ai.domain.enums.SegmentationStrategyType;
 import br.org.rivelino.exegese_ai.service.DocumentIngestionService;
+import br.org.rivelino.exegese_ai.service.DocumentRejectedException;
+import br.org.rivelino.exegese_ai.service.DocumentStorageService;
+import br.org.rivelino.exegese_ai.service.EmbeddingReindexService;
+import br.org.rivelino.exegese_ai.service.EmbeddingService;
+import br.org.rivelino.exegese_ai.service.ErrorReference;
 import br.org.rivelino.exegese_ai.service.SubjectCatalogService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.MessageSource;
 import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -39,12 +46,15 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
 /**
- * Administrative controller for viewing cataloged documents, statuses and uploading new normative files.
+ * Administrative controller for viewing cataloged documents, statuses and uploading new normative files
+ * (uploads are indexed asynchronously; the catalog shows PROCESSING / INDEXED / FAILED).
+ * It also starts the background embedding reindexing job (CSRF-protected POST) and shows its progress.
  *
  * @author Rivelino Patrício
  */
@@ -53,15 +63,23 @@ import java.util.UUID;
 @PreAuthorize("hasAnyRole('ADMIN', 'OPERATOR')")
 public class AdminDocumentController {
 
+    private static final Logger log = LoggerFactory.getLogger(AdminDocumentController.class);
+
     private final SubjectCatalogService catalogService;
     private final DocumentIngestionService ingestionService;
+    private final EmbeddingReindexService reindexService;
+    private final EmbeddingService embeddingService;
     private final MessageSource messageSource;
 
     public AdminDocumentController(SubjectCatalogService catalogService,
                                    DocumentIngestionService ingestionService,
+                                   EmbeddingReindexService reindexService,
+                                   EmbeddingService embeddingService,
                                    MessageSource messageSource) {
         this.catalogService = catalogService;
         this.ingestionService = ingestionService;
+        this.reindexService = reindexService;
+        this.embeddingService = embeddingService;
         this.messageSource = messageSource;
     }
 
@@ -76,10 +94,19 @@ public class AdminDocumentController {
         model.addAttribute("subjects", subjects);
         model.addAttribute("selectedSubjectId", subjectId);
         model.addAttribute("selectedStatus", status);
+        model.addAttribute("reindexStatus", reindexService.status());
+        model.addAttribute("embeddingConfigured", embeddingService.isConfigured());
+        model.addAttribute("processingDocuments", documents.stream()
+                .anyMatch(doc -> DocumentIngestionService.STATUS_PROCESSING.equals(doc.status())));
 
         return "admin/documents";
     }
 
+    /**
+     * Accepts a PDF upload: the file is validated ({@code %PDF-} signature) and stored, the document is
+     * registered with status {@code PROCESSING} and the request returns immediately; extraction, segmentation
+     * and embeddings run in the background and the catalog shows the resulting status.
+     */
     @PostMapping("/upload")
     public String uploadDocument(@RequestParam("file") MultipartFile file,
                                  @RequestParam(value = "title", required = false) String title,
@@ -95,16 +122,73 @@ public class AdminDocumentController {
             return "redirect:/admin/documents";
         }
 
-        try {
-            String docTitle = (title != null && !title.isBlank()) ? title.trim() : file.getOriginalFilename();
-            ingestionService.ingestDocument(docTitle, file.getOriginalFilename(), file.getInputStream(), subjectIds, strategy);
-            String successMsg = messageSource.getMessage("admin.document.success.uploaded", new Object[]{docTitle}, userLocale);
-            redirectAttributes.addFlashAttribute("successMessage", successMsg);
+        if (!embeddingService.isConfigured()) {
+            // Without an embedding provider every ingestion would fail: refuse before storing anything
+            String reference = ErrorReference.newReference();
+            log.warn("Document upload refused: embeddings unavailable (GEMINI_API_KEY not configured) [ref={}]", reference);
+            redirectAttributes.addFlashAttribute("errorMessage", messageSource.getMessage(
+                    "admin.document.error.embedding_unavailable", new Object[]{reference}, userLocale));
+            return "redirect:/admin/documents";
+        }
+
+        String fileName = DocumentStorageService.sanitizeFileName(file.getOriginalFilename());
+        String docTitle = DocumentStorageService.sanitizeTitle(title, fileName);
+        try (InputStream input = file.getInputStream()) {
+            DocumentIngestionService.UploadOutcome outcome =
+                    ingestionService.submitDocument(docTitle, fileName, input, subjectIds, strategy);
+            String key = switch (outcome.state()) {
+                case QUEUED -> "admin.document.success.queued";
+                case ALREADY_INDEXED -> "admin.document.success.already_indexed";
+                case ALREADY_PROCESSING -> "admin.document.success.already_processing";
+            };
+            redirectAttributes.addFlashAttribute("successMessage",
+                    messageSource.getMessage(key, new Object[]{outcome.document().getTitle()}, userLocale));
+        } catch (DocumentRejectedException e) {
+            log.warn("Document upload rejected: {}", e.getMessage());
+            redirectAttributes.addFlashAttribute("errorMessage",
+                    messageSource.getMessage("admin.document.error.not_pdf", null, userLocale));
         } catch (IOException | RuntimeException e) {
-            String errorMsg = messageSource.getMessage("admin.document.error.ingestion_failed", new Object[]{e.getMessage()}, userLocale);
+            // The exception detail (SQL, paths, infrastructure) stays in the server log, linked by the reference
+            String reference = ErrorReference.newReference();
+            log.error("Document upload failed [ref={}]", reference, e);
+            String errorMsg = messageSource.getMessage("admin.document.error.ingestion_failed", new Object[]{reference}, userLocale);
             redirectAttributes.addFlashAttribute("errorMessage", errorMsg);
         }
 
+        return "redirect:/admin/documents";
+    }
+
+    /**
+     * Starts the background recomputation of chunk embeddings from the stored chunk text: chunks without a
+     * vector (or with a legacy zero vector), or every chunk when {@code forceAll} is set.
+     */
+    @PostMapping("/reindex-embeddings")
+    public String reindexEmbeddings(@RequestParam(value = "forceAll", defaultValue = "false") boolean forceAll,
+                                    Locale locale,
+                                    RedirectAttributes redirectAttributes) {
+        Locale userLocale = (locale != null) ? locale : LocaleContextHolder.getLocale();
+        EmbeddingReindexService.StartOutcome outcome;
+        try {
+            outcome = reindexService.start(forceAll);
+        } catch (RuntimeException e) {
+            String reference = ErrorReference.newReference();
+            log.error("Embedding reindex could not start [ref={}]", reference, e);
+            redirectAttributes.addFlashAttribute("errorMessage",
+                    messageSource.getMessage("admin.document.reindex.error", new Object[]{reference}, userLocale));
+            return "redirect:/admin/documents";
+        }
+
+        switch (outcome) {
+            case STARTED -> redirectAttributes.addFlashAttribute("successMessage", messageSource.getMessage(
+                    "admin.document.reindex.started",
+                    new Object[]{String.valueOf(reindexService.status().total())}, userLocale));
+            case ALREADY_RUNNING -> redirectAttributes.addFlashAttribute("errorMessage",
+                    messageSource.getMessage("admin.document.reindex.already_running", null, userLocale));
+            case NOT_CONFIGURED -> redirectAttributes.addFlashAttribute("errorMessage",
+                    messageSource.getMessage("admin.document.reindex.not_configured", null, userLocale));
+            case UNSUPPORTED_DATABASE -> redirectAttributes.addFlashAttribute("errorMessage",
+                    messageSource.getMessage("admin.document.reindex.unsupported", null, userLocale));
+        }
         return "redirect:/admin/documents";
     }
 

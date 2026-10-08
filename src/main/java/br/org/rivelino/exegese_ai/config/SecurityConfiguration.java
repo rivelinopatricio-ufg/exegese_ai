@@ -19,16 +19,26 @@
  *******************************************************************************/
 package br.org.rivelino.exegese_ai.config;
 
+import br.org.rivelino.exegese_ai.security.AccountStatusFilter;
 import br.org.rivelino.exegese_ai.security.CustomOidcUserService;
 import br.org.rivelino.exegese_ai.security.GoogleOAuth2SuccessHandler;
 import br.org.rivelino.exegese_ai.security.InputSanitizationFilter;
+import br.org.rivelino.exegese_ai.security.OAuth2LoginFailureHandler;
 import br.org.rivelino.exegese_ai.security.RateLimitFilter;
+import br.org.rivelino.exegese_ai.security.UserAccountStatusCache;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
+import org.springframework.security.web.authentication.DelegatingAuthenticationEntryPoint;
+import org.springframework.security.web.authentication.HttpStatusEntryPoint;
+import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
+import org.springframework.security.web.header.writers.CrossOriginOpenerPolicyHeaderWriter.CrossOriginOpenerPolicy;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 
 /**
@@ -41,19 +51,45 @@ import org.springframework.security.web.servlet.util.matcher.PathPatternRequestM
 @EnableMethodSecurity
 public class SecurityConfiguration {
 
+    /**
+     * Strict Content-Security-Policy: scripts and styles only from this origin (no 'unsafe-inline', no CDN).
+     * Templates load the self-hosted Tailwind build (/css/tailwind.css) and external scripts from /js/,
+     * and wire events with addEventListener instead of inline handlers. img-src also admits Google
+     * profile pictures (*.googleusercontent.com); fetch() and EventSource stay same-origin.
+     */
+    static final String CONTENT_SECURITY_POLICY = "default-src 'self'; "
+            + "script-src 'self'; "
+            + "style-src 'self'; "
+            + "img-src 'self' data: https://*.googleusercontent.com; "
+            + "connect-src 'self'; "
+            + "font-src 'self'; "
+            + "object-src 'none'; "
+            + "base-uri 'self'; "
+            + "form-action 'self'; "
+            + "frame-ancestors 'none'";
+
+    /** Browser features the application never uses are disabled for every page. */
+    static final String PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=()";
+
     private final CustomOidcUserService customOidcUserService;
     private final GoogleOAuth2SuccessHandler successHandler;
+    private final OAuth2LoginFailureHandler failureHandler;
     private final RateLimitFilter rateLimitFilter;
     private final InputSanitizationFilter inputSanitizationFilter;
+    private final UserAccountStatusCache accountStatusCache;
 
     public SecurityConfiguration(CustomOidcUserService customOidcUserService,
                                  GoogleOAuth2SuccessHandler successHandler,
+                                 OAuth2LoginFailureHandler failureHandler,
                                  RateLimitFilter rateLimitFilter,
-                                 InputSanitizationFilter inputSanitizationFilter) {
+                                 InputSanitizationFilter inputSanitizationFilter,
+                                 UserAccountStatusCache accountStatusCache) {
         this.customOidcUserService = customOidcUserService;
         this.successHandler = successHandler;
+        this.failureHandler = failureHandler;
         this.rateLimitFilter = rateLimitFilter;
         this.inputSanitizationFilter = inputSanitizationFilter;
+        this.accountStatusCache = accountStatusCache;
     }
 
     @Bean
@@ -63,10 +99,23 @@ public class SecurityConfiguration {
                 .contentTypeOptions(org.springframework.security.config.Customizer.withDefaults())
                 .frameOptions(frame -> frame.deny())
                 .httpStrictTransportSecurity(hsts -> hsts.includeSubDomains(true).maxAgeInSeconds(31536000))
-                .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; img-src 'self' data:; connect-src 'self';"))
+                .contentSecurityPolicy(csp -> csp.policyDirectives(CONTENT_SECURITY_POLICY))
+                .referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
+                .permissionsPolicyHeader(permissions -> permissions.policy(PERMISSIONS_POLICY))
+                .crossOriginOpenerPolicy(coop -> coop.policy(CrossOriginOpenerPolicy.SAME_ORIGIN))
             )
             .addFilterBefore(inputSanitizationFilter, org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(rateLimitFilter, org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)
+            // Re-validates active flag and role of the authenticated account before authorization decisions
+            .addFilterBefore(new AccountStatusFilter(accountStatusCache), AuthorizationFilter.class)
+            // API calls get HTTP 401 instead of a redirect to the HTML login page
+            .exceptionHandling(exceptions -> exceptions
+                .authenticationEntryPoint(DelegatingAuthenticationEntryPoint.builder()
+                    .addEntryPointFor(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED),
+                            PathPatternRequestMatcher.pathPattern("/api/**"))
+                    .defaultEntryPoint(new LoginUrlAuthenticationEntryPoint("/login"))
+                    .build())
+            )
             .authorizeHttpRequests(authorize -> authorize
                 .requestMatchers("/login", "/error", "/css/**", "/js/**", "/images/**", "/actuator/health", "/favicon.ico").permitAll()
                 .requestMatchers("/admin/users/**", "/admin/models/**").hasRole("ADMIN")
@@ -78,6 +127,7 @@ public class SecurityConfiguration {
                 .loginPage("/login")
                 .userInfoEndpoint(userInfo -> userInfo.oidcUserService(customOidcUserService))
                 .successHandler(successHandler)
+                .failureHandler(failureHandler)
             )
             .logout(logout -> logout
                 .logoutRequestMatcher(PathPatternRequestMatcher.pathPattern("/logout"))

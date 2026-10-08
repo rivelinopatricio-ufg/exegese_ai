@@ -182,5 +182,74 @@ class HybridSearchIntegrationTest {
         assertThat(results).isNotEmpty();
         assertThat(results.get(0).chunkTitle()).contains("Criptoativos e Bitcoin");
         assertThat(results.get(0).score()).isGreaterThan(0.0);
+        // Grounding evidence travels with the result: lexical score here (no vector column outside PostgreSQL)
+        assertThat(results.get(0).lexicalScore()).isGreaterThan(0.0);
+        assertThat(results.get(0).vectorSimilarity()).isNull();
+    }
+
+    @Test
+    @DisplayName("Search never returns documents linked only to inactive subjects (all subjects are public)")
+    void testInactiveSubjectsExcludedFromSearch() {
+        ExegeseSubject active = subjectRepository.save(
+                new ExegeseSubject("visivel-ativo", "Assunto Ativo", "Ativo")
+        );
+        // A second active subject, so that filtering by the first one really narrows the search
+        ExegeseSubject otherActive = subjectRepository.save(
+                new ExegeseSubject("visivel-outro", "Outro Assunto Ativo", "Ativo")
+        );
+        ExegeseSubject inactive = new ExegeseSubject("oculto-inativo", "Assunto Inativo", "Inativo");
+        inactive.setActive(false);
+        inactive = subjectRepository.save(inactive);
+
+        ExegeseDocument onlyActive = saveDocumentWithChunk("Doc Ativo", "hash-vis-ativo", List.of(active));
+        ExegeseDocument onlyInactive = saveDocumentWithChunk("Doc Inativo", "hash-vis-inativo", List.of(inactive));
+        ExegeseDocument withoutSubject = saveDocumentWithChunk("Doc Sem Assunto", "hash-vis-nenhum", List.of());
+        ExegeseDocument mixed = saveDocumentWithChunk("Doc Misto", "hash-vis-misto", List.of(active, inactive));
+        ExegeseDocument onlyOther = saveDocumentWithChunk("Doc Outro", "hash-vis-outro", List.of(otherActive));
+        entityManager.flush();
+
+        // No filter: documents with an active subject or without any subject
+        assertThat(documentIds(hybridSearchService.search("Zirconiofilia", List.of(), 10)))
+                .contains(onlyActive.getId(), withoutSubject.getId(), mixed.getId())
+                .doesNotContain(onlyInactive.getId());
+        assertThat(documentIds(hybridSearchService.search("Zirconiofilia", null, 10)))
+                .doesNotContain(onlyInactive.getId());
+
+        // Every active subject selected (the chat page default) narrows nothing: untagged documents stay visible
+        List<java.util.UUID> allActive = subjectRepository.findByActiveTrue().stream().map(ExegeseSubject::getId).toList();
+        assertThat(documentIds(hybridSearchService.search("Zirconiofilia", allActive, 10)))
+                .contains(onlyActive.getId(), withoutSubject.getId(), mixed.getId(), onlyOther.getId())
+                .doesNotContain(onlyInactive.getId());
+
+        // Active subject filter: only documents tagged with it
+        assertThat(documentIds(hybridSearchService.search("Zirconiofilia", List.of(active.getId()), 10)))
+                .containsExactlyInAnyOrder(onlyActive.getId(), mixed.getId());
+
+        // Inactive (or unknown) subject ids are ignored: they never expose the hidden document
+        assertThat(documentIds(hybridSearchService.search("Zirconiofilia", List.of(inactive.getId()), 10)))
+                .contains(onlyActive.getId(), withoutSubject.getId(), mixed.getId())
+                .doesNotContain(onlyInactive.getId());
+        assertThat(documentIds(hybridSearchService.search("Zirconiofilia",
+                List.of(inactive.getId(), java.util.UUID.randomUUID(), active.getId()), 10)))
+                .containsExactlyInAnyOrder(onlyActive.getId(), mixed.getId());
+    }
+
+    private ExegeseDocument saveDocumentWithChunk(String title, String hash, List<ExegeseSubject> subjects) {
+        ExegeseDocument doc = new ExegeseDocument(title, hash + ".pdf", "storage/" + hash + ".pdf", hash, 256L, "PDF");
+        subjects.forEach(doc::addSubject);
+        doc = documentRepository.save(doc);
+        chunkRepository.save(new ExegeseChunk(
+                doc,
+                hash + "-chunk",
+                1,
+                "Zirconiofilia — " + title,
+                "Texto de teste sobre zirconiofilia para validar a visibilidade por assunto.",
+                "{}"
+        ));
+        return doc;
+    }
+
+    private static List<java.util.UUID> documentIds(List<SearchResultChunk> results) {
+        return results.stream().map(SearchResultChunk::documentId).distinct().toList();
     }
 }

@@ -22,6 +22,7 @@ package br.org.rivelino.exegese_ai.security;
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseUser;
 import br.org.rivelino.exegese_ai.domain.enums.UserRole;
 import br.org.rivelino.exegese_ai.service.UserService;
+import org.springframework.security.authentication.InsufficientAuthenticationException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -30,6 +31,7 @@ import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Facade providing clean decoupled access to current authenticated security context.
@@ -46,47 +48,71 @@ public class SecurityContextFacade {
     }
 
     public Optional<String> getCurrentUserEmail() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return extractEmail(SecurityContextHolder.getContext().getAuthentication());
+    }
+
+    /**
+     * Extracts the account e-mail from an authentication (OIDC/OAuth2 e-mail claim or username).
+     *
+     * @param auth Authentication to inspect (may be null)
+     * @return The e-mail, or empty for anonymous or unidentifiable principals
+     */
+    public static Optional<String> extractEmail(Authentication auth) {
         if (auth == null || !auth.isAuthenticated()) {
             return Optional.empty();
         }
 
         Object principal = auth.getPrincipal();
+        String email = null;
         if (principal instanceof OidcUser oidcUser) {
-            return Optional.ofNullable(oidcUser.getEmail());
+            email = oidcUser.getEmail();
+        } else if (principal instanceof OAuth2User oauth2User) {
+            email = oauth2User.getAttribute("email");
+        } else if (principal instanceof UserDetails userDetails) {
+            email = userDetails.getUsername();
+        } else if (principal instanceof String principalString && !"anonymousUser".equals(principalString)) {
+            email = principalString;
         }
-        if (principal instanceof OAuth2User oauth2User) {
-            return Optional.ofNullable(oauth2User.getAttribute("email"));
-        }
-        if (principal instanceof UserDetails userDetails) {
-            return Optional.ofNullable(userDetails.getUsername());
-        }
-        if (principal instanceof String principalString && !"anonymousUser".equals(principalString)) {
-            return Optional.of(principalString);
-        }
-        return Optional.empty();
+        return email == null || email.isBlank() ? Optional.empty() : Optional.of(email);
     }
 
     public Optional<ExegeseUser> getCurrentUser() {
         return getCurrentUserEmail().flatMap(userService::findByEmail);
     }
 
-    public boolean isAdmin() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth != null && auth.getAuthorities().stream().anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()))) {
-            return true;
-        }
-        return getCurrentUser().map(user -> user.getRole() == UserRole.ROLE_ADMIN).orElse(false);
+    /**
+     * Resolves the local account of the authenticated principal. Never provisions a fallback account:
+     * a principal without e-mail or without a local account is treated as unauthenticated.
+     *
+     * @return The local account of the current user
+     * @throws InsufficientAuthenticationException when there is no matching local account
+     */
+    public ExegeseUser requireCurrentUser() {
+        return getCurrentUser().orElseThrow(() ->
+                new InsufficientAuthenticationException("No local account for the authenticated principal"));
     }
 
+    /**
+     * Whether the current authentication holds ROLE_ADMIN. Authorities are kept in sync with the
+     * persisted role by {@link AccountStatusFilter}.
+     */
+    public boolean isAdmin() {
+        return hasAnyAuthority(UserRole.ROLE_ADMIN.name());
+    }
+
+    /**
+     * Whether the current authentication holds ROLE_ADMIN or ROLE_OPERATOR.
+     */
     public boolean isOperatorOrAdmin() {
+        return hasAnyAuthority(UserRole.ROLE_ADMIN.name(), UserRole.ROLE_OPERATOR.name());
+    }
+
+    private static boolean hasAnyAuthority(String... authorities) {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth != null && auth.getAuthorities().stream().anyMatch(a ->
-                "ROLE_ADMIN".equals(a.getAuthority()) || "ROLE_OPERATOR".equals(a.getAuthority()))) {
-            return true;
+        if (auth == null || !auth.isAuthenticated()) {
+            return false;
         }
-        return getCurrentUser()
-                .map(user -> user.getRole() == UserRole.ROLE_ADMIN || user.getRole() == UserRole.ROLE_OPERATOR)
-                .orElse(false);
+        Set<String> wanted = Set.of(authorities);
+        return auth.getAuthorities().stream().anyMatch(a -> wanted.contains(a.getAuthority()));
     }
 }

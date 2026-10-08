@@ -22,6 +22,7 @@ package br.org.rivelino.exegese_ai.repository;
 import br.org.rivelino.exegese_ai.domain.entity.UserSubjectPermission;
 import br.org.rivelino.exegese_ai.domain.entity.UserSubjectPermissionId;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
 import java.util.List;
 import java.util.UUID;
@@ -36,4 +37,7 @@ public interface UserSubjectPermissionRepository extends JpaRepository<UserSubje
     List<UserSubjectPermission> findByIdUserId(UUID userId);
 
     List<UserSubjectPermission> findByIdSubjectId(UUID subjectId);
+
+    @Query("select p from UserSubjectPermission p join fetch p.subject s order by s.name")
+    List<UserSubjectPermission> findAllWithSubject();
 }

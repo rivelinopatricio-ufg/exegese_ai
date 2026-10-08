@@ -41,6 +41,13 @@ public class ExegeseUser {
     @Column(nullable = false, unique = true)
     private String email;
 
+    /**
+     * Stable Google account identifier (OIDC {@code sub}). Bound on the first Google login; a later login
+     * asserting the same e-mail with another subject is refused, since e-mail addresses can be reassigned.
+     */
+    @Column(name = "google_sub", unique = true)
+    private String googleSub;
+
     @Column(nullable = false)
     private String name;
 
@@ -85,6 +92,14 @@ public class ExegeseUser {
 
     public void setEmail(String email) {
         this.email = email;
+    }
+
+    public String getGoogleSub() {
+        return googleSub;
+    }
+
+    public void setGoogleSub(String googleSub) {
+        this.googleSub = googleSub;
     }
 
     public String getName() {

@@ -23,30 +23,38 @@ import br.org.rivelino.exegese_ai.domain.dto.CanonicalCitationDTO;
 import br.org.rivelino.exegese_ai.domain.dto.SearchResultChunk;
 import br.org.rivelino.exegese_ai.domain.entity.AiModelConfig;
 import br.org.rivelino.exegese_ai.domain.entity.ChatMessage;
-import br.org.rivelino.exegese_ai.domain.entity.ChatSession;
 import br.org.rivelino.exegese_ai.repository.ChatMessageRepository;
-import br.org.rivelino.exegese_ai.repository.ChatSessionRepository;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.MessageSource;
-import org.springframework.context.NoSuchMessageException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
-import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Service orchestrating RAG inference, anti-hallucination guard rails, and SSE streaming.
+ * <p>
+ * The pipeline is not transactional: messages are persisted through {@link ChatTranscriptService} in short
+ * transactions, so no database connection is held while the LLM generates the answer. The system prompt is
+ * resolved per request from the i18n bundles with the locale captured in the web thread; there is no
+ * shared, mutable prompt.
+ * <p>
+ * When the client goes away mid-answer, the upstream LLM stream is aborted and the partial answer is
+ * discarded (not persisted): the transcript keeps the question without an answer.
  *
  * @author Rivelino Patrício
  */
@@ -55,48 +63,26 @@ public class RagOrchestrationService {
 
     private static final Logger log = LoggerFactory.getLogger(RagOrchestrationService.class);
 
-    public static final String DEFAULT_SPECIALIST_SYSTEM_PROMPT = """
-        Você é o Exegese AI, assistente consultivo especialista e auditor com fundamentação documental estrita na base oficial selecionada.
+    public static final String SYSTEM_PROMPT_KEY = "rag.specialist.system.prompt";
+    public static final Locale DEFAULT_LOCALE = Locale.of("pt", "BR");
 
-        SUA MISSÃO:
-        Resolver com precisão, clareza didática e máxima utilidade prática a dúvida do cidadão/contribuinte, transformando a complexidade dos manuais e normas em orientações claras e acionáveis.
+    /** Delimiter tags that separate untrusted data (retrieved excerpts, user question) from instructions. */
+    static final String CONTEXT_TAG = "official_context";
+    static final String QUESTION_TAG = "user_question";
 
-        DIRETRIZES FUNDAMENTAIS DE RESPOSTA:
-        1. RESPOSTA DIRETA & CONCLUSIVA:
-           - Inicie respondendo de forma imediata à pergunta formulada (ex.: "Sim, é dedutível.", "Não, não é obrigatório apresentar declaração.", "Depende do cumprimento dos seguintes requisitos:").
-
-        2. REQUISITOS, CONDIÇÕES & LIMITES:
-           - Apresente os requisitos ou condições em tópicos claros.
-           - Destaque em negrito todos os valores monetários (ex.: **R$ 2.275,08**, **R$ 30.639,90**), limites percentuais (ex.: **12%**, **20%**), idades (ex.: **até 24 anos**, **65 anos ou mais**) e datas/prazos (ex.: **até 30 de abril de 2026**).
-
-        3. ORIENTAÇÃO PRÁTICA PASSO A PASSO (COMO PROCEDER):
-           - Sempre que a dúvida envolver declaração ou procedimento, oriente objetivamente:
-             * Em qual Ficha ou Menu declarar (ex.: "Ficha Rendimentos Isentos e Não Tributáveis", "Ficha Pagamentos Efetuados", "Ficha Bens e Direitos").
-             * O Código correspondente, se informado nos documentos oficiais.
-             * Cuidados e comprovantes necessários a manter em guarda.
-
-        4. FIDELIDADE DOCUMENTAL ESTRITA (ZERO ALUCINAÇÃO):
-           - Todas as afirmações devem ser 100% embasadas nos trechos do "CONTEXTO DOCUMENTAL OFICIAL" fornecido.
-           - NUNCA invente leis, artigos, prazos ou regras não constantes no contexto.
-           - Se os trechos oficiais não contiverem a informação necessária para algum aspecto da dúvida, declare expressamente essa limitação com honestidade.
-
-        5. CITAÇÃO DAS FONTES OFICIAIS:
-           - Indique as fontes oficiais citadas no texto dos trechos (ex.: número da pergunta, Instrução Normativa ou Lei).
-
-        ESTRUTURA DE FORMATAÇÃO:
-        - Utilize Markdown limpo com listas, marcadores, tabelas quando comparativo e negrito para números e conceitos-chave.
-        """;
-
-    public static volatile String SPECIALIST_SYSTEM_PROMPT = DEFAULT_SPECIALIST_SYSTEM_PROMPT;
+    private static final Pattern DELIMITER_TAG_PATTERN = Pattern.compile(
+            "<(\\s*/?\\s*(?:official_context|source|title|excerpt|user_question)\\b)",
+            Pattern.CASE_INSENSITIVE);
 
     private final HybridSearchService hybridSearchService;
     private final QueryRewritingService queryRewritingService;
     private final AntiHallucinationGuard antiHallucinationGuard;
     private final LlmProviderRouter providerRouter;
     private final LlmClientService llmClientService;
-    private final ChatSessionRepository sessionRepository;
+    private final ChatSessionAccessService sessionAccessService;
     private final ChatMessageRepository messageRepository;
-    private final ObjectMapper objectMapper;
+    private final ChatTranscriptService transcriptService;
+    private final JsonMapper objectMapper;
     private final MessageSource messageSource;
 
     public RagOrchestrationService(HybridSearchService hybridSearchService,
@@ -104,76 +90,66 @@ public class RagOrchestrationService {
                                    AntiHallucinationGuard antiHallucinationGuard,
                                    LlmProviderRouter providerRouter,
                                    LlmClientService llmClientService,
-                                   ChatSessionRepository sessionRepository,
+                                   ChatSessionAccessService sessionAccessService,
                                    ChatMessageRepository messageRepository,
-                                   ObjectMapper objectMapper,
+                                   ChatTranscriptService transcriptService,
+                                   JsonMapper objectMapper,
                                    MessageSource messageSource) {
         this.hybridSearchService = hybridSearchService;
         this.queryRewritingService = queryRewritingService;
         this.antiHallucinationGuard = antiHallucinationGuard;
         this.providerRouter = providerRouter;
         this.llmClientService = llmClientService;
-        this.sessionRepository = sessionRepository;
+        this.sessionAccessService = sessionAccessService;
         this.messageRepository = messageRepository;
+        this.transcriptService = transcriptService;
         this.objectMapper = objectMapper;
         this.messageSource = messageSource;
     }
 
-    @PostConstruct
-    public void init() {
-        configureSystemPromptForLocale(Locale.of("pt", "BR"));
-    }
-
     /**
-     * Configures the specialist system prompt dynamically according to the specified locale.
+     * Resolves the specialist system prompt for the given locale (pt-BR when null). Unsupported locales
+     * fall back to the default bundle.
      *
-     * @param locale Target locale for the system prompt
+     * @param locale Locale of the request that asked the question
+     * @return The localized system prompt
      */
-    public void configureSystemPromptForLocale(Locale locale) {
-        if (locale == null) {
-            locale = Locale.of("pt", "BR");
-        }
-        try {
-            String prompt = messageSource.getMessage("rag.specialist.system.prompt", null, locale);
-            if (prompt != null && !prompt.isBlank()) {
-                SPECIALIST_SYSTEM_PROMPT = prompt;
-                log.info("RagOrchestrationService SPECIALIST_SYSTEM_PROMPT reconfigured for locale: {}", locale);
-            }
-        } catch (NoSuchMessageException e) {
-            log.warn("Could not find rag.specialist.system.prompt for locale {}, keeping current prompt", locale, e);
-        }
+    public String resolveSystemPrompt(Locale locale) {
+        return messageSource.getMessage(SYSTEM_PROMPT_KEY, null, locale != null ? locale : DEFAULT_LOCALE);
     }
 
     /**
      * Executes end-to-end RAG pipeline, emitting Server-Sent Events to the client.
      *
      * @param sessionId Active chat session identifier
+     * @param userId Identifier of the authenticated user, resolved in the request thread; the session must belong to it
      * @param userQuestion Question asked by the user
      * @param subjectIds Active subject filters
+     * @param locale Locale of the request, captured in the web thread (system prompt and messages)
      * @param emitter Spring MVC SseEmitter instance
+     * @param cancelled Signals that the client went away; checked between steps and for every LLM token
+     * @throws IllegalArgumentException when the session does not exist or belongs to another user (nothing is
+     *         persisted nor emitted in that case)
      */
-    @Transactional
     public void streamRagResponse(UUID sessionId,
+                                  UUID userId,
                                   String userQuestion,
                                   List<UUID> subjectIds,
-                                  SseEmitter emitter) {
+                                  Locale locale,
+                                  SseEmitter emitter,
+                                  BooleanSupplier cancelled) {
         long startTime = System.currentTimeMillis();
+        Locale effectiveLocale = locale != null ? locale : DEFAULT_LOCALE;
 
-        ChatSession session = sessionRepository.findById(sessionId)
-                .orElseThrow(() -> new IllegalArgumentException("Chat session not found: " + sessionId));
+        // Ownership is checked again here (defense in depth): a foreign session behaves as a missing one
+        if (sessionAccessService.findOwnedSession(sessionId, userId).isEmpty()) {
+            throw new IllegalArgumentException("Chat session not found: " + sessionId);
+        }
 
         List<ChatMessage> history = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
 
-        // 1. Persist User Message
-        ChatMessage userMessage = new ChatMessage(session, "USER", userQuestion);
-        if (subjectIds != null && !subjectIds.isEmpty()) {
-            try {
-                userMessage.setAppliedSubjectIds(objectMapper.writeValueAsString(subjectIds));
-            } catch (JsonProcessingException e) {
-                log.warn("Failed to serialize subjectIds to JSON: {}", e.getMessage());
-            }
-        }
-        messageRepository.save(userMessage);
+        // 1. Persist User Message (own short transaction)
+        transcriptService.saveUserMessage(sessionId, userQuestion, serializeSubjectIds(subjectIds));
 
         try {
             // 2. Contextual Query Rewriting
@@ -181,17 +157,21 @@ public class RagOrchestrationService {
 
             // 3. Hybrid Search Retrieval
             List<SearchResultChunk> chunks = hybridSearchService.search(effectiveQuery, subjectIds, 4);
+            if (cancelled.getAsBoolean()) {
+                logCancellation(sessionId);
+                return;
+            }
 
             // 4. Anti-Hallucination Guard Evaluation
             if (!antiHallucinationGuard.isGrounded(chunks)) {
+                log.debug("No grounded evidence for session {}: {} candidates, best vector similarity {}",
+                        sessionId, chunks.size(), antiHallucinationGuard.bestSimilarity(chunks));
                 String refusal = antiHallucinationGuard.getRefusalMessage();
                 emitToken(emitter, refusal);
                 emitComplete(emitter);
 
-                ChatMessage refusalMessage = new ChatMessage(session, "ASSISTANT", refusal);
-                refusalMessage.setModelUsed("anti-hallucination-guard");
-                refusalMessage.setExecutionDurationMs((int) (System.currentTimeMillis() - startTime));
-                messageRepository.save(refusalMessage);
+                transcriptService.saveAssistantMessage(sessionId, refusal, null, "anti-hallucination-guard",
+                        (int) (System.currentTimeMillis() - startTime));
                 return;
             }
 
@@ -200,16 +180,17 @@ public class RagOrchestrationService {
             String citationsJson = objectMapper.writeValueAsString(citations);
             emitEvent(emitter, "citation", citationsJson);
 
-            // 6. Grounded Answer Synthesis & Streaming via Multi-Provider LLM
+            // 6. Grounded Answer Synthesis & Streaming via Multi-Provider LLM (no transaction open here)
             AiModelConfig activeModel = providerRouter.getDefaultProvider();
             String apiKey = providerRouter.resolveApiKey(activeModel.getProvider());
             boolean hasKey = providerRouter.hasConfiguredKey(activeModel.getProvider());
 
             StringBuilder streamedAnswer = new StringBuilder();
+            AtomicBoolean aborted = new AtomicBoolean(false);
             boolean llmStreamed = false;
 
             if (hasKey) {
-                String systemPrompt = SPECIALIST_SYSTEM_PROMPT;
+                String systemPrompt = resolveSystemPrompt(effectiveLocale);
                 String userPrompt = buildUserPromptWithContext(userQuestion, chunks);
 
                 llmStreamed = llmClientService.streamInference(
@@ -218,18 +199,40 @@ public class RagOrchestrationService {
                         systemPrompt,
                         userPrompt,
                         token -> {
+                            if (aborted.get() || cancelled.getAsBoolean()) {
+                                aborted.set(true);
+                                // Thrown inside the provider's line consumer: closes the upstream HTTP stream
+                                throw new ChatStreamCancelledException();
+                            }
                             try {
                                 emitToken(emitter, token);
                                 streamedAnswer.append(token);
-                            } catch (IOException e) {
-                                throw new java.io.UncheckedIOException(e);
+                            } catch (IOException | IllegalStateException e) {
+                                // The client is gone (broken pipe or emitter already completed)
+                                aborted.set(true);
+                                throw new ChatStreamCancelledException();
                             }
                         }
                 );
             }
 
+            if (aborted.get() || cancelled.getAsBoolean()) {
+                // Partial answer intentionally discarded: it would be stored as if it were complete
+                logCancellation(sessionId);
+                return;
+            }
+
             String fullAnswer;
-            if (llmStreamed && !streamedAnswer.isEmpty()) {
+            if (!streamedAnswer.isEmpty()) {
+                if (!llmStreamed) {
+                    // Upstream failed after tokens were already delivered: never splice the fallback onto a
+                    // partial answer, and store nothing that differs from what the user saw
+                    String reference = ErrorReference.newReference();
+                    log.warn("LLM stream failed mid-answer [ref={}, session={}]; partial answer discarded",
+                            reference, sessionId);
+                    emitFailure(emitter, effectiveLocale, reference);
+                    return;
+                }
                 fullAnswer = streamedAnswer.toString();
             } else {
                 // Fallback: structured multi-chunk document synthesis
@@ -239,40 +242,93 @@ public class RagOrchestrationService {
 
             emitComplete(emitter);
 
-            // 7. Persist Assistant Response
-            ChatMessage assistantMessage = new ChatMessage(session, "ASSISTANT", fullAnswer);
-            assistantMessage.setCitations(citationsJson);
-            assistantMessage.setModelUsed(activeModel.getModelName());
-            assistantMessage.setExecutionDurationMs((int) (System.currentTimeMillis() - startTime));
-            messageRepository.save(assistantMessage);
+            // 7. Persist Assistant Response (own short transaction)
+            transcriptService.saveAssistantMessage(sessionId, fullAnswer, citationsJson, activeModel.getModelName(),
+                    (int) (System.currentTimeMillis() - startTime));
 
-            session.setUpdatedAt(Instant.now());
-            sessionRepository.save(session);
-
+        } catch (ChatStreamCancelledException e) {
+            logCancellation(sessionId);
         } catch (IOException | RuntimeException e) {
-            log.error("Error during RAG streaming orchestration: {}", e.getMessage(), e);
-            try {
-                emitter.send(SseEmitter.event().name("error").data("Erro ao processar consulta: " + e.getMessage()));
-            } catch (@SuppressWarnings("unused") IOException ignored) {}
-            emitter.completeWithError(e);
+            if (cancelled.getAsBoolean()) {
+                logCancellation(sessionId);
+                return;
+            }
+            String reference = ErrorReference.newReference();
+            log.error("Error during RAG streaming orchestration [ref={}, session={}]", reference, sessionId, e);
+            emitFailure(emitter, effectiveLocale, reference);
         }
     }
 
-    private String buildUserPromptWithContext(String userQuestion, List<SearchResultChunk> chunks) {
+    /**
+     * Sends a generic, localized {@code error} event (with the correlation reference only, never the exception
+     * message) and completes the stream.
+     *
+     * @param emitter Stream to finish
+     * @param locale Locale of the request
+     * @param reference Correlation reference also written to the server log
+     */
+    public void emitFailure(SseEmitter emitter, Locale locale, String reference) {
+        String message = messageSource.getMessage("chat.error.generic", new Object[]{reference},
+                locale != null ? locale : DEFAULT_LOCALE);
+        try {
+            Map<String, String> payload = new LinkedHashMap<>();
+            payload.put("message", message);
+            payload.put("reference", reference);
+            emitter.send(SseEmitter.event().name("error").data(objectMapper.writeValueAsString(payload)));
+            emitter.complete();
+        } catch (IOException | IllegalStateException e) {
+            log.debug("Could not deliver the error event [ref={}]: client already disconnected", reference);
+        }
+    }
+
+    private void logCancellation(UUID sessionId) {
+        log.info("Chat stream cancelled by the client; partial answer discarded (session {})", sessionId);
+    }
+
+    private String serializeSubjectIds(List<UUID> subjectIds) {
+        if (subjectIds == null || subjectIds.isEmpty()) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(subjectIds);
+        } catch (JacksonException e) {
+            log.warn("Failed to serialize subjectIds to JSON: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Builds the user turn with the retrieved excerpts and the question in clearly delimited sections. The
+     * system prompt instructs the model to treat everything inside them strictly as data. Look-alike
+     * delimiter tags inside the untrusted text are neutralized so they cannot close a section early.
+     */
+    String buildUserPromptWithContext(String userQuestion, List<SearchResultChunk> chunks) {
         StringBuilder sb = new StringBuilder();
-        sb.append("=== CONTEXTO DOCUMENTAL OFICIAL ===\n\n");
+        sb.append('<').append(CONTEXT_TAG).append(">\n");
         for (int i = 0; i < chunks.size(); i++) {
             SearchResultChunk chunk = chunks.get(i);
-            sb.append(String.format("[FONTE %d: %s", (i + 1), chunk.documentTitle()));
+            sb.append("<source index=\"").append(i + 1).append("\">\n");
+            sb.append("<title>").append(neutralizeDelimiters(chunk.documentTitle()));
             if (chunk.chunkTitle() != null && !chunk.chunkTitle().isBlank()) {
-                sb.append(" | ").append(chunk.chunkTitle());
+                sb.append(" | ").append(neutralizeDelimiters(chunk.chunkTitle()));
             }
-            sb.append("]\n");
-            sb.append(chunk.content().trim()).append("\n\n");
+            sb.append("</title>\n");
+            sb.append("<excerpt>\n").append(neutralizeDelimiters(chunk.content().trim())).append("\n</excerpt>\n");
+            sb.append("</source>\n");
         }
-        sb.append("=== DÚVIDA DO CONTRIBUINTE / CIDADÃO ===\n");
-        sb.append(userQuestion.trim());
+        sb.append("</").append(CONTEXT_TAG).append(">\n\n");
+        sb.append('<').append(QUESTION_TAG).append(">\n");
+        sb.append(neutralizeDelimiters(userQuestion.trim())).append('\n');
+        sb.append("</").append(QUESTION_TAG).append('>');
         return sb.toString();
+    }
+
+    static String neutralizeDelimiters(String text) {
+        if (text == null) {
+            return "";
+        }
+        Matcher matcher = DELIMITER_TAG_PATTERN.matcher(text);
+        return matcher.replaceAll(match -> Matcher.quoteReplacement("&lt;" + match.group(1)));
     }
 
     private String generateFallbackGroundedAnswer(List<SearchResultChunk> chunks) {
@@ -299,9 +355,9 @@ public class RagOrchestrationService {
                     JsonNode node = objectMapper.readTree(chunk.metadataJson());
                     if (node.has("page")) page = node.get("page").asInt();
                     if (node.has("questionNumber")) questionNum = node.get("questionNumber").asInt();
-                    if (node.has("articleNumber")) articleNum = node.get("articleNumber").asText();
-                    if (node.has("legalBasis")) legalBasis = node.get("legalBasis").asText();
-                } catch (@SuppressWarnings("unused") JsonProcessingException ignored) {}
+                    if (node.has("articleNumber")) articleNum = node.get("articleNumber").asString();
+                    if (node.has("legalBasis")) legalBasis = node.get("legalBasis").asString();
+                } catch (@SuppressWarnings("unused") JacksonException ignored) {}
             }
 
             list.add(new CanonicalCitationDTO(

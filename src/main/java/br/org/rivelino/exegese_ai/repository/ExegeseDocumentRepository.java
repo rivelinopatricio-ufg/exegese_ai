@@ -21,9 +21,11 @@ package br.org.rivelino.exegese_ai.repository;
 
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseDocument;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -41,4 +43,20 @@ public interface ExegeseDocumentRepository extends JpaRepository<ExegeseDocument
 
     @Query("SELECT d FROM ExegeseDocument d JOIN d.subjects s WHERE s.id = :subjectId")
     List<ExegeseDocument> findBySubjectId(@Param("subjectId") UUID subjectId);
+
+    /**
+     * Marks every document still in {@code fromStatus} with {@code toStatus} and the given error message
+     * (startup recovery of ingestions interrupted by a shutdown).
+     *
+     * @return Number of updated documents
+     */
+    @Modifying
+    @Query("""
+            UPDATE ExegeseDocument d SET d.status = :toStatus, d.errorMessage = :errorMessage, d.updatedAt = :now
+            WHERE d.status = :fromStatus
+            """)
+    int updateStatus(@Param("fromStatus") String fromStatus,
+                     @Param("toStatus") String toStatus,
+                     @Param("errorMessage") String errorMessage,
+                     @Param("now") Instant now);
 }

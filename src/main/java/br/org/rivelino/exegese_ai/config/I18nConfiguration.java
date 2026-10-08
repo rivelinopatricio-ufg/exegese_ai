@@ -19,13 +19,11 @@
  *******************************************************************************/
 package br.org.rivelino.exegese_ai.config;
 
-import br.org.rivelino.exegese_ai.service.RagOrchestrationService;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.time.Duration;
 import java.util.Locale;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
@@ -50,12 +48,6 @@ public class I18nConfiguration implements WebMvcConfigurer {
     public static final String LOCALE_COOKIE_NAME = "EXEGESE_LOCALE";
     public static final String LOCALE_PARAM_NAME = "lang";
 
-    private final ObjectProvider<RagOrchestrationService> ragOrchestrationServiceProvider;
-
-    public I18nConfiguration(ObjectProvider<RagOrchestrationService> ragOrchestrationServiceProvider) {
-        this.ragOrchestrationServiceProvider = ragOrchestrationServiceProvider;
-    }
-
     @Bean
     public LocaleResolver localeResolver() {
         CookieLocaleResolver resolver = new CookieLocaleResolver(LOCALE_COOKIE_NAME);
@@ -79,14 +71,8 @@ public class I18nConfiguration implements WebMvcConfigurer {
                         // Language alteration is blocked after login to simplify application state
                         return true;
                     }
-                    boolean result = super.preHandle(request, response, handler);
-                    try {
-                        Locale locale = parseLocaleValue(newLocale);
-                        ragOrchestrationServiceProvider.ifAvailable(service -> service.configureSystemPromptForLocale(locale));
-                    } catch (IllegalArgumentException e) {
-                        // ignore malformed locale string
-                    }
-                    return result;
+                    // Only this visitor's locale cookie changes: the RAG system prompt is resolved per request
+                    return super.preHandle(request, response, handler);
                 }
                 return true;
             }

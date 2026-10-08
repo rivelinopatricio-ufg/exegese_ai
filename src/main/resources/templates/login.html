@@ -6,7 +6,7 @@
     <title th:text="#{login.page.title}">Exegese AI — Acesso Institucional</title>
     <link rel="icon" type="image/png" th:href="@{/images/logo.png}">
     <link rel="stylesheet" th:href="@{/css/app.css}">
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" th:href="@{/css/tailwind.css}">
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center p-4">
     <div class="max-w-md w-full bg-slate-800 rounded-xl shadow-2xl p-8 border border-slate-700 text-center">
@@ -42,7 +42,7 @@
         </div>
 
         <!-- Feedback Alerts -->
-        <div th:if="${param.error}" class="mb-4 p-3 rounded bg-red-900/50 border border-red-700 text-red-200 text-sm" th:text="#{login.alert.error}">
+        <div th:if="${loginErrorKey}" class="mb-4 p-3 rounded bg-red-900/50 border border-red-700 text-red-200 text-sm" th:text="#{${loginErrorKey}}">
             Falha na autenticação corporativa. Tente novamente.
         </div>
 

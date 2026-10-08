@@ -19,34 +19,61 @@
  *******************************************************************************/
 package br.org.rivelino.exegese_ai.security;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.MessageSource;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.servlet.LocaleResolver;
 
 import java.io.IOException;
 import java.time.Duration;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Locale;
 
 /**
- * Filter enforcing API rate limiting (20 requests per minute per IP) using Bucket4j token bucket.
+ * Filter enforcing API rate limiting on {@code /api/**} (20 requests per minute by default) using a
+ * Bucket4j token bucket per client.
+ * <p>
+ * The client key is the authenticated account e-mail when present, otherwise the remote address as
+ * resolved by Tomcat's {@code RemoteIpValve} from trusted proxies only. Client-supplied headers such as
+ * {@code X-Forwarded-For} are never read here, so they cannot be used to obtain fresh buckets. Buckets live
+ * in a bounded Caffeine cache that forgets idle clients, so the memory used is bounded too.
  *
  * @author Rivelino Patrício
  */
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
 
-    private final Map<String, Bucket> ipBuckets = new ConcurrentHashMap<>();
+    private final int requestsPerMinute;
+    private final Cache<String, Bucket> buckets;
+    private final MessageSource messageSource;
+    private final LocaleResolver localeResolver;
+
+    public RateLimitFilter(@Value("${exegese.security.rate-limit.requests-per-minute:20}") int requestsPerMinute,
+                           MessageSource messageSource,
+                           LocaleResolver localeResolver) {
+        this.requestsPerMinute = requestsPerMinute;
+        this.messageSource = messageSource;
+        this.localeResolver = localeResolver;
+        // An idle bucket is full again after one minute, so forgetting it after a few minutes is lossless
+        this.buckets = Caffeine.newBuilder()
+                .expireAfterAccess(Duration.ofMinutes(5))
+                .maximumSize(100_000)
+                .build();
+    }
 
     private Bucket createNewBucket() {
         Bandwidth limit = Bandwidth.builder()
-                .capacity(20)
-                .refillGreedy(20, Duration.ofMinutes(1))
+                .capacity(requestsPerMinute)
+                .refillGreedy(requestsPerMinute, Duration.ofMinutes(1))
                 .build();
         return Bucket.builder().addLimit(limit).build();
     }
@@ -58,15 +85,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
         String uri = request.getRequestURI();
 
         // Enforce rate limiting specifically on /api/** endpoints
-        if (uri.startsWith("/api/")) {
-            String clientIp = resolveClientIp(request);
-            Bucket bucket = ipBuckets.computeIfAbsent(clientIp, (@SuppressWarnings("unused") var k) -> createNewBucket());
+        if (uri.startsWith(request.getContextPath() + "/api/")) {
+            Bucket bucket = buckets.get(resolveClientKey(request), key -> createNewBucket());
 
             if (!bucket.tryConsume(1)) {
-                response.setStatus(429);
-                response.setContentType("application/json;charset=UTF-8");
+                Locale locale = localeResolver.resolveLocale(request);
+                String message = messageSource.getMessage("security.rate_limit.exceeded",
+                        new Object[]{String.valueOf(requestsPerMinute)}, locale);
                 response.setHeader("Retry-After", "60");
-                response.getWriter().write("{\"error\": \"Limite de requisições excedido. Máximo de 20 requisições por minuto permitidas.\"}");
+                JsonErrorResponse.write(response, 429, message);
                 return;
             }
         }
@@ -74,18 +101,16 @@ public class RateLimitFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    private String resolveClientIp(HttpServletRequest request) {
-        String xf = request.getHeader("X-Forwarded-For");
-        if (xf != null && !xf.isBlank()) {
-            return xf.split(",")[0].trim();
-        }
-        return request.getRemoteAddr() != null ? request.getRemoteAddr() : "unknown";
+    private static String resolveClientKey(HttpServletRequest request) {
+        return SecurityContextFacade.extractEmail(SecurityContextHolder.getContext().getAuthentication())
+                .map(email -> "user:" + email.toLowerCase(Locale.ROOT))
+                .orElseGet(() -> "ip:" + (request.getRemoteAddr() != null ? request.getRemoteAddr() : "unknown"));
     }
 
     /**
      * Resets buckets for testing or maintenance purposes.
      */
     public void reset() {
-        ipBuckets.clear();
+        buckets.invalidateAll();
     }
 }

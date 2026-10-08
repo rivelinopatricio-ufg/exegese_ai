@@ -1,25 +1,31 @@
 # ==============================================================================
 # Exegese AI - Production Multi-Container Orchestration
 # Services: PostgreSQL 17 + PGVector, Spring Boot 4.1.1, SWAG Reverse Proxy
+# Required variables (generated into .env by install.sh): POSTGRES_USER, POSTGRES_PASSWORD, EXEGESE_AES_SECRET
+# Only the proxy publishes ports (HTTP_PORT/HTTPS_PORT, default 80/443); app and database stay on exegese-net.
+# Third-party images are pinned to explicit versions (Dependabot proposes updates for the Dockerfiles).
 # ==============================================================================
-
-version: "3.8"
 
 services:
   postgres:
-    image: pgvector/pgvector:pg17
+    image: pgvector/pgvector:0.8.7-pg17
     container_name: db
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-exegese_db}
-      POSTGRES_USER: ${POSTGRES_USER:-exegese_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-exegese_password}
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in .env (run ./install.sh)}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env (run ./install.sh)}
+    # No published ports: the database is reachable only by the app on the internal exegese-net network.
+    # Docker-published ports bypass host firewalls such as UFW. For local maintenance use:
+    #   docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+    # The schema is created and migrated by the app (Flyway, src/main/resources/db/migration); the database
+    # user created by the image (POSTGRES_USER) is a superuser, so V1 can also create the pgvector extension.
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./docker/postgres/init-schema.sql:/docker-entrypoint-initdb.d/01-init-schema.sql:ro
+    # The entrypoint only drops privileges (gosu), which no-new-privileges allows
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-exegese_user} -d ${POSTGRES_DB:-exegese_db}"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -35,11 +41,17 @@ services:
       dockerfile: Dockerfile
     # Port 8080 is isolated on the internal network exegese-net and exposed only to the proxy
     environment:
-      SPRING_PROFILES_ACTIVE: local
+      # Production profile (src/main/resources/application-prod.properties)
+      SPRING_PROFILES_ACTIVE: prod
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-exegese_db}
-      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-exegese_user}
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-exegese_password}
-      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-admin@exegese.ai}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:?POSTGRES_USER must be set in .env (run ./install.sh)}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env (run ./install.sh)}
+      # Required to bootstrap the first administrator (no default; empty = nobody is promoted automatically)
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-}
+      # Optional comma-separated allowlist of Google e-mail domains (empty = any verified Google account)
+      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-}
+      # With an allowlist, only accounts managed by that Google Workspace domain (hd claim); false = e-mail match only
+      REQUIRE_HOSTED_DOMAIN: ${REQUIRE_HOSTED_DOMAIN:-true}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -48,11 +60,36 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
-      EXEGESE_AES_SECRET: ${EXEGESE_AES_SECRET:-}
+      # Optional extra hosts allowed as LLM base URLs ("host" or "PROVIDER=host", comma-separated)
+      LLM_ALLOWED_HOSTS: ${LLM_ALLOWED_HOSTS:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-llama3.2}
+      # Base64 of 32 random bytes (openssl rand -base64 32); the app refuses to start without it
+      EXEGESE_AES_SECRET: ${EXEGESE_AES_SECRET:?EXEGESE_AES_SECRET must be set in .env (openssl rand -base64 32)}
+      # Original uploaded PDFs (<sha256>.pdf), kept for asynchronous ingestion and re-ingestion
+      UPLOAD_DIR: /app/uploads
+    # Hardening: immutable root filesystem, no Linux capabilities (non-root on port 8080), no privilege
+    # escalation, bounded memory/CPU. The JVM sizes its heap from the memory limit (-XX:MaxRAMPercentage=75).
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${APP_MEM_LIMIT:-2g}
+    # 0 = no CPU limit. install.sh writes APP_CPUS = host CPU count capped at 2; it must never exceed the host
+    # CPU count, otherwise Docker refuses to create the container
+    cpus: ${APP_CPUS:-0}
+    pids_limit: 512
     volumes:
       - storage_data:/app/storage
       - upload_data:/app/uploads
+      # Writable scratch space (java.io.tmpdir): multipart uploads, PDFBox stream/font cache, Tomcat work dirs.
+      # tmpfs pages count towards mem_limit.
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 268435456
+          mode: 01777
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
       interval: 10s
@@ -78,8 +115,11 @@ services:
       - URL=${SERVER_NAME:-exegese-ai.sytes.net}
       - SUBDOMAINS=
       - VALIDATION=${VALIDATION:-http}
-      - EMAIL=${LETSENCRYPT_EMAIL:-admin@exegese.ai}
+      # Let's Encrypt account e-mail (expiry notices); empty = SWAG registers without an e-mail
+      - EMAIL=${LETSENCRYPT_EMAIL:-}
       - STAGING=${LETSENCRYPT_STAGING:-false}
+    # NET_ADMIN is required only by SWAG's built-in fail2ban, which bans abusive clients with iptables rules
+    # (jails in the proxy_config volume, /config/fail2ban). Remove it if fail2ban is not wanted.
     cap_add:
       - NET_ADMIN
     ports:
@@ -87,7 +127,10 @@ services:
       - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}"
     volumes:
       - proxy_config:/config
-      - ./docker/proxy/config/default:/config/nginx/site-confs/default
+      # SWAG only loads site-confs/*.conf; this replaces its generated default.conf with the Exegese AI site.
+      # install.sh generates docker/proxy/config/site.conf (untracked) with the configured ports and sets
+      # PROXY_SITE_CONFIG=site.conf; without it the tracked template (default ports 80/443) is used
+      - ./docker/proxy/config/${PROXY_SITE_CONFIG:-default}:/config/nginx/site-confs/default.conf:ro
     depends_on:
       app:
         condition: service_healthy

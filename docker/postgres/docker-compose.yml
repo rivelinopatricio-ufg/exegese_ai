@@ -1,9 +1,16 @@
 # ==============================================================================
 # Exegese AI - Remote PostgreSQL 17 + pgvector Standalone Service
 # Usage on remote machine: docker compose up -d --build
+# Required variables (e.g. in a .env file next to this compose file):
+#   POSTGRES_USER, POSTGRES_PASSWORD (generate with: openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32)
 # ==============================================================================
-
-version: "3.8"
+#
+# SECURITY: ports published by Docker bypass host firewalls such as UFW (Docker's iptables rules
+# are evaluated first). The database is therefore bound to 127.0.0.1 by default; reach it through
+# an SSH tunnel or a private network. If it really must be exposed remotely, set
+# POSTGRES_BIND_ADDRESS to a private interface address, enable TLS (ssl=on with a server
+# certificate) and restrict pg_hba.conf to the application host (hostssl ... <app-ip>/32 scram-sha-256),
+# plus a firewall rule in the DOCKER-USER chain or the cloud security group.
 
 services:
   postgres:
@@ -14,15 +21,15 @@ services:
     container_name: exegese-ai-db
     restart: unless-stopped
     ports:
-      - "0.0.0.0:5432:5432"
+      - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:5432:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-exegese_db}
-      POSTGRES_USER: ${POSTGRES_USER:-exegese_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-exegese_password}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-exegese_user} -d ${POSTGRES_DB:-exegese_db}"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 5s
       retries: 5

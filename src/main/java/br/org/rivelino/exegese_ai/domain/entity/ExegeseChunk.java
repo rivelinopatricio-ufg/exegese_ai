@@ -28,11 +28,16 @@ import java.util.UUID;
 
 /**
  * Atomic text chunk with embedding vector and full-text search indexing.
+ * <p>
+ * The chunk hash is unique per document ({@code document_id, chunk_hash_sha256}), so the same text can be
+ * indexed in several documents. The {@code embedding} and {@code tsv} columns exist only in PostgreSQL
+ * (Flyway migrations) and are not mapped here.
  *
  * @author Rivelino Patrício
  */
 @Entity
-@Table(name = "exegese_chunk")
+@Table(name = "exegese_chunk", uniqueConstraints = @UniqueConstraint(
+        name = "uk_exegese_chunk_document_hash", columnNames = {"document_id", "chunk_hash_sha256"}))
 public class ExegeseChunk {
 
     @Id
@@ -43,7 +48,7 @@ public class ExegeseChunk {
     @JoinColumn(name = "document_id", nullable = false)
     private ExegeseDocument document;
 
-    @Column(name = "chunk_hash_sha256", nullable = false, unique = true, length = 64)
+    @Column(name = "chunk_hash_sha256", nullable = false, length = 64)
     private String chunkHashSha256;
 
     @Column(name = "sequence_number", nullable = false)
@@ -145,11 +150,11 @@ public class ExegeseChunk {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         ExegeseChunk that = (ExegeseChunk) o;
-        return Objects.equals(chunkHashSha256, that.chunkHashSha256);
+        return id != null && Objects.equals(id, that.id);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(chunkHashSha256);
+        return Objects.hash(id);
     }
 }

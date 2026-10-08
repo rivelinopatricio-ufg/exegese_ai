@@ -1,0 +1,125 @@
+# ==============================================================================
+# Exegese AI - Continuous Integration
+# - build:    Maven Wrapper verify on JDK 25 (unit, MockMvc/H2 and Testcontainers pgvector tests;
+#             GitHub-hosted Ubuntu runners provide the Docker daemon Testcontainers needs)
+# - frontend: rebuilds the Tailwind CSS and fails if the committed static/css/tailwind.css is stale
+# - docker:   builds the application and proxy images (no push) and validates the compose files
+# ==============================================================================
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Maven verify (JDK 25)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 25 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Build and test
+        run: ./mvnw -B -ntp verify
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          retention-days: 7
+
+  frontend:
+    name: Tailwind CSS is up to date
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: src/main/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: src/main/frontend/package-lock.json
+
+      - name: Build CSS
+        run: |
+          npm ci
+          npm run build:css
+
+      - name: Fail if the committed tailwind.css is stale
+        run: |
+          if ! git diff --exit-code -- ../resources/static/css/tailwind.css; then
+            echo "::error file=src/main/resources/static/css/tailwind.css::Stale CSS: run 'npm ci && npm run build:css' in src/main/frontend and commit the result."
+            exit 1
+          fi
+
+  docker:
+    name: Docker images and compose
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Dummy values: only used to render and validate the compose files, never deployed
+      POSTGRES_USER: ci_user
+      POSTGRES_PASSWORD: ci_password
+      EXEGESE_AES_SECRET: Y2ktb25seS1kdW1teS1hZXMta2V5LTMyLWJ5dGVzISE=
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate compose files
+        run: |
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.yml -f docker-compose.override.ai.yml config -q
+          docker compose -f docker-compose.yml -f docker-compose.override.ai-with-gpu.yml config -q
+          docker compose -f docker/postgres/docker-compose.yml config -q
+
+      - name: Build application image
+        run: docker build --pull -t exegese-ai:ci .
+
+      - name: Check application image (non-root, no dev keystore)
+        run: |
+          test "$(docker image inspect -f '{{.Config.User}}' exegese-ai:ci)" = "10001:10001"
+          cid=$(docker create exegese-ai:ci)
+          docker export "$cid" > image.tar
+          docker cp "$cid:/app/app.jar" app.jar
+          docker rm "$cid"
+          if tar -tf image.tar | grep -E '^app/.*\.(p12|jks)$'; then
+            echo "::error::A keystore was found under /app in the image"
+            exit 1
+          fi
+          if unzip -l app.jar | grep -E '\.(p12|jks)$'; then
+            echo "::error::A keystore was packaged in app.jar"
+            exit 1
+          fi
+
+      - name: Build proxy image
+        run: docker build --pull -t exegese-ai-proxy:ci docker/proxy

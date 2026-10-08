@@ -17,50 +17,18 @@
  *
  * This software uses third-party components, distributed accordingly to their own licenses.
  *******************************************************************************/
-package br.org.rivelino.exegese_ai.config;
+package br.org.rivelino.exegese_ai.domain.dto;
 
-import java.util.Collections;
-
-import org.springframework.ai.document.Document;
-import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.ai.embedding.EmbeddingRequest;
-import org.springframework.ai.embedding.EmbeddingResponse;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Primary;
+import java.util.UUID;
 
 /**
- * Configuration for vector store and fallback embedding model.
+ * Read-only view of a subject permission delegated to a user, rendered by the admin panel.
  *
  * @author Rivelino Patrício
  */
-@Configuration
-public class VectorStoreConfiguration {
-
-    @Bean
-    @Primary
-    @ConditionalOnMissingBean(EmbeddingModel.class) EmbeddingModel fallbackEmbeddingModel() {
-        return new EmbeddingModel() {
-            @Override
-            public EmbeddingResponse call(EmbeddingRequest request) {
-                return new EmbeddingResponse(Collections.emptyList());
-            }
-
-            @Override
-            public float[] embed(Document document) {
-                return new float[768];
-            }
-
-            @Override
-            public float[] embed(String text) {
-                return new float[768];
-            }
-
-            @Override
-            public int dimensions() {
-                return 768;
-            }
-        };
-    }
-}
+public record SubjectPermissionDTO(
+        UUID userId,
+        UUID subjectId,
+        String subjectName,
+        String permissionLevel
+) {}

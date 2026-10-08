@@ -20,22 +20,55 @@ readonly CLR_CYAN="\033[36m"
 readonly DEFAULT_HOST="exegese-ai.sytes.net"
 readonly DEFAULT_HTTP_PORT=80
 readonly DEFAULT_HTTPS_PORT=443
-readonly DEFAULT_ADMIN_EMAIL="admin@exegese.ai"
+readonly DEFAULT_POSTGRES_DB="exegese_db"
+readonly DEFAULT_OLLAMA_BASE_URL="http://ollama:11434"
+readonly DEFAULT_OLLAMA_CHAT_MODEL="llama3.2"
+readonly DEFAULT_APP_MEM_LIMIT="2g"
+# Upper bound of the default CPU limit of the app container (never above the host CPU count)
+readonly MAX_DEFAULT_APP_CPUS=2
+# NGINX site generated with the configured ports (untracked, see .gitignore); docker/proxy/config/default
+# is the tracked template, mounted when PROXY_SITE_CONFIG is not set
+readonly PROXY_SITE_CONFIG_FILE="site.conf"
+
+# Values used by earlier versions of this script / docker-compose.yml (public, must not be kept)
+readonly LEGACY_POSTGRES_USER="exegese_user"
+readonly LEGACY_POSTGRES_PASSWORD="exegese_password"
+readonly LEGACY_OLLAMA_BASE_URL="http://localhost:11434"
+# Former default initial administrator: a domain the operator does not control, never accepted again
+readonly LEGACY_ADMIN_EMAIL="admin@exegese.ai"
 
 # Execution Flags and Configuration Variables
 FLAG_NO_INGEST=false
 FLAG_UNINSTALL=false
+FLAG_SECRET_ON_CLI=false
+DB_PASSWORD_IS_DEFAULT=false
 HOST_NAME=""
 HTTP_PORT=""
 HTTPS_PORT=""
 EMAIL_SSL=""
-GOOGLE_CLIENT_ID=""
-GOOGLE_CLIENT_SECRET=""
-INITIAL_ADMIN_EMAIL=""
-GEMINI_API_KEY=""
-OPENAI_API_KEY=""
-ANTHROPIC_API_KEY=""
-CEREBRAS_API_KEY=""
+
+# Credentials may also be provided as environment variables (preferred over CLI flags, which
+# are visible to other users in 'ps' and are stored in the shell history)
+GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-}"
+GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET:-}"
+INITIAL_ADMIN_EMAIL="${INITIAL_ADMIN_EMAIL:-}"
+ALLOWED_EMAIL_DOMAINS="${ALLOWED_EMAIL_DOMAINS:-}"
+REQUIRE_HOSTED_DOMAIN="${REQUIRE_HOSTED_DOMAIN:-}"
+GEMINI_API_KEY="${GEMINI_API_KEY:-}"
+OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
+CEREBRAS_API_KEY="${CEREBRAS_API_KEY:-}"
+
+# Database credentials and AES master key: preserved from an existing .env, otherwise taken from
+# the environment, otherwise generated randomly on first install
+POSTGRES_DB="${POSTGRES_DB:-}"
+POSTGRES_USER="${POSTGRES_USER:-}"
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}"
+EXEGESE_AES_SECRET="${EXEGESE_AES_SECRET:-}"
+OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-}"
+OLLAMA_CHAT_MODEL="${OLLAMA_CHAT_MODEL:-}"
+APP_CPUS="${APP_CPUS:-}"
+APP_MEM_LIMIT="${APP_MEM_LIMIT:-}"
 
 log_info() {
     echo -e "${CLR_BLUE}[INFO]${CLR_RESET} $1"
@@ -81,7 +114,10 @@ print_help() {
     echo "                                 (spring.security.oauth2.client.registration.google.client-id)."
     echo "  --google-client-secret <sec>   Google OAuth2 Client Secret"
     echo "                                 (spring.security.oauth2.client.registration.google.client-secret)."
-    echo "  --initial-admin <email>        Initial administrator email (default: admin@exegese.ai)."
+    echo "  --initial-admin <email>        Initial administrator Google e-mail (required, no default). Receives"
+    echo "                                 ROLE_ADMIN on first login while no administrator exists yet."
+    echo "  --allowed-email-domains <list> Comma-separated Google e-mail domains allowed to sign in"
+    echo "                                 (optional; empty = any Google account with a verified e-mail)."
     echo "  --gemini-key <key>             Google Gemini API Key."
     echo "  --openai-key <key>             OpenAI API Key."
     echo "  --anthropic-key <key>          Anthropic Claude API Key."
@@ -89,10 +125,26 @@ print_help() {
     echo "  --no-ingest                    Start platform without triggering initial document ingestion."
     echo "  --uninstall                    Stop containers, remove persistent volumes, and delete .env."
     echo ""
+    echo -e "${CLR_YELLOW}${CLR_BOLD}Security note:${CLR_RESET} secrets passed as command-line flags (--google-client-secret, --*-key)"
+    echo "are visible to other local users in 'ps' and are saved in your shell history. Prefer environment"
+    echo "variables (or the interactive prompts, which do not echo secrets):"
+    echo "  GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, INITIAL_ADMIN_EMAIL, ALLOWED_EMAIL_DOMAINS, REQUIRE_HOSTED_DOMAIN,"
+    echo "  GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, CEREBRAS_API_KEY"
+    echo "Values typed inline before the command also reach the history: load them with 'read -rs VAR; export VAR'."
+    echo ""
+    echo -e "${CLR_BOLD}Generated secrets:${CLR_RESET}"
+    echo "  On first install, POSTGRES_USER (exegese_<random hex>), POSTGRES_PASSWORD (32 random"
+    echo "  alphanumeric characters) and EXEGESE_AES_SECRET (openssl rand -base64 32) are generated"
+    echo "  into .env (chmod 600). When an existing .env is reconfigured, POSTGRES_DB, POSTGRES_USER,"
+    echo "  POSTGRES_PASSWORD and EXEGESE_AES_SECRET are preserved: the database volume keeps the"
+    echo "  credentials it was created with, and a new AES key would make stored API keys unreadable."
+    echo "  To reuse an existing database without its .env, export POSTGRES_USER and POSTGRES_PASSWORD"
+    echo "  (and EXEGESE_AES_SECRET, if known) before running the installer."
+    echo ""
     echo -e "${CLR_BOLD}Examples:${CLR_RESET}"
     echo "  ./install.sh"
     echo "  ./install.sh -H exegese-ai.sytes.net --http-port 80 --https-port 443 --email-ssl admin@exegese-ai.sytes.net"
-    echo "  ./install.sh --google-client-id xxxx.apps.googleusercontent.com --google-client-secret GOCSPX-yyyy"
+    echo "  read -rs GOOGLE_CLIENT_SECRET && export GOOGLE_CLIENT_SECRET && GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com ./install.sh"
     echo "  ./install.sh --http-port 8080 --https-port 8443"
     echo "  ./install.sh --no-ingest"
     echo "  ./install.sh --uninstall"
@@ -136,26 +188,35 @@ parse_arguments() {
                 ;;
             --google-client-secret)
                 GOOGLE_CLIENT_SECRET="$2"
+                FLAG_SECRET_ON_CLI=true
                 shift 2
                 ;;
             --initial-admin)
                 INITIAL_ADMIN_EMAIL="$2"
                 shift 2
                 ;;
+            --allowed-email-domains)
+                ALLOWED_EMAIL_DOMAINS="$2"
+                shift 2
+                ;;
             --gemini-key)
                 GEMINI_API_KEY="$2"
+                FLAG_SECRET_ON_CLI=true
                 shift 2
                 ;;
             --openai-key)
                 OPENAI_API_KEY="$2"
+                FLAG_SECRET_ON_CLI=true
                 shift 2
                 ;;
             --anthropic-key)
                 ANTHROPIC_API_KEY="$2"
+                FLAG_SECRET_ON_CLI=true
                 shift 2
                 ;;
             --cerebras-key)
                 CEREBRAS_API_KEY="$2"
+                FLAG_SECRET_ON_CLI=true
                 shift 2
                 ;;
             *)
@@ -218,12 +279,321 @@ check_prerequisites() {
     log_success "All prerequisites (Docker, Docker Compose, curl) are available."
 }
 
-generate_random_secret() {
+# Random password from [A-Za-z0-9] only: safe in .env files, JDBC URLs and SQL literals without escaping
+generate_password() {
+    local length="${1:-32}"
+    local pool=""
+    while [[ ${#pool} -lt $length ]]; do
+        if command -v openssl &> /dev/null; then
+            pool+=$(openssl rand -base64 48 | LC_ALL=C tr -dc 'A-Za-z0-9')
+        else
+            pool+=$(head -c 256 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9')
+        fi
+    done
+    printf '%s' "${pool:0:length}"
+}
+
+generate_hex() {
+    local bytes="${1:-4}"
     if command -v openssl &> /dev/null; then
-        openssl rand -hex 16
+        openssl rand -hex "$bytes"
     else
-        cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1
+        head -c "$bytes" /dev/urandom | od -An -tx1 | tr -d ' \n'
     fi
+}
+
+# AES-256 master key: Base64 of exactly 32 random bytes (format required by exegese.security.crypto-key)
+generate_aes_key() {
+    if command -v openssl &> /dev/null; then
+        openssl rand -base64 32
+    else
+        head -c 32 /dev/urandom | base64 | tr -d '\n'
+    fi
+}
+
+is_valid_aes_key() {
+    [[ "${1:-}" =~ ^[A-Za-z0-9+/]{43}=$ ]]
+}
+
+# Prints the value of KEY in an env file (last occurrence, surrounding quotes and CR removed)
+read_env_value() {
+    local key="$1"
+    local file="${2:-.env}"
+    local value=""
+    [[ -f "$file" ]] || return 0
+    value=$(grep -E "^${key}=" "$file" | tail -n 1 | cut -d '=' -f2- || true)
+    value="${value%$'\r'}"
+    if [[ "$value" =~ ^\"(.*)\"$ || "$value" =~ ^\'(.*)\'$ ]]; then
+        value="${BASH_REMATCH[1]}"
+    fi
+    printf '%s' "$value"
+}
+
+# Sets KEY=VALUE in an env file in place (replacing or appending), keeping its permissions
+set_env_value() {
+    local key="$1"
+    local value="$2"
+    local file="${3:-.env}"
+    local tmp
+    tmp=$(mktemp "${file}.XXXXXX")
+    if grep -qE "^${key}=" "$file"; then
+        KEY="$key" VALUE="$value" awk 'BEGIN { k = ENVIRON["KEY"]; v = ENVIRON["VALUE"] }
+            index($0, k "=") == 1 { print k "=" v; next } { print }' "$file" > "$tmp"
+    else
+        cat "$file" > "$tmp"
+        if [[ -s "$file" && -n "$(tail -c 1 "$file")" ]]; then
+            echo "" >> "$tmp"
+        fi
+        printf '%s=%s\n' "$key" "$value" >> "$tmp"
+    fi
+    cat "$tmp" > "$file"
+    rm -f "$tmp"
+}
+
+# Docker Compose project name of this installation (COMPOSE_PROJECT_NAME, else the normalized directory name)
+compose_project_name() {
+    local name="${COMPOSE_PROJECT_NAME:-}"
+    [[ -z "$name" ]] && name=$(read_env_value COMPOSE_PROJECT_NAME)
+    [[ -z "$name" ]] && name=$(basename "$PWD")
+    printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-'
+}
+
+# PostgreSQL data volume of THIS compose project only: a '*pgdata' volume of another project (for
+# example docker/postgres) must never make the installer reuse the legacy public credentials
+find_existing_pgdata_volumes() {
+    local project
+    project=$(compose_project_name)
+    {
+        docker volume ls -q \
+            --filter "label=com.docker.compose.project=${project}" \
+            --filter "label=com.docker.compose.volume=pgdata" 2>/dev/null || true
+        # Volumes created without labels by very old Compose versions
+        docker volume inspect "${project}_pgdata" --format '{{.Name}}' 2>/dev/null || true
+    } | sed '/^$/d' | sort -u
+}
+
+warn_default_db_password() {
+    local user="$1"
+    local db="$2"
+    echo ""
+    echo -e "${CLR_RED}${CLR_BOLD}==============================================================================${CLR_RESET}"
+    echo -e "${CLR_RED}${CLR_BOLD} SECURITY WARNING: POSTGRES_PASSWORD is still the public default '${LEGACY_POSTGRES_PASSWORD}'${CLR_RESET}"
+    echo -e "${CLR_RED}${CLR_BOLD}==============================================================================${CLR_RESET}"
+    echo "This password is published in the project repository. Earlier versions also published port 5432"
+    echo "on all interfaces, so consider the database contents and the stored API keys exposed: rotate"
+    echo "the provider API keys and the Google client secret as well."
+    echo ""
+    echo "Rotate the database password once the containers are running:"
+    cat << EOF
+  1. NEW_PASS=\$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32)
+  2. docker compose exec postgres psql -U ${user} -d ${db} -c "ALTER USER ${user} WITH PASSWORD '\$NEW_PASS';"
+  3. sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=\$NEW_PASS/" .env
+  4. docker compose up -d    (recreates the app container with the new password)
+EOF
+    echo ""
+}
+
+# Database volumes survive 'docker compose down' and a deleted .env: PostgreSQL applies
+# POSTGRES_USER/POSTGRES_PASSWORD only when the volume is initialized for the first time.
+warn_existing_pgdata_without_env() {
+    local volumes
+    volumes=$(find_existing_pgdata_volumes)
+    [[ -z "$volumes" ]] && return 0
+
+    echo ""
+    echo -e "${CLR_YELLOW}${CLR_BOLD}[DATABASE VOLUME FOUND WITHOUT .env]${CLR_RESET}"
+    echo "Existing PostgreSQL data volume(s):"
+    while IFS= read -r volume; do
+        echo -e "  ${CLR_CYAN}${volume}${CLR_RESET}"
+    done <<< "$volumes"
+    echo "The existing database keeps its ORIGINAL credentials (installations made by earlier versions"
+    echo "of this script used ${LEGACY_POSTGRES_USER} / ${LEGACY_POSTGRES_PASSWORD}). Newly generated credentials will be"
+    echo "rejected by that database and the application will not start. Options:"
+    echo "  - restore the previous .env and run ./install.sh again;"
+    echo "  - run again with the existing credentials, e.g.:"
+    echo "      POSTGRES_USER=${LEGACY_POSTGRES_USER} POSTGRES_PASSWORD='<current password>' ./install.sh"
+    echo "    (then rotate a default password as the installer explains);"
+    echo "  - or delete the old database (ALL DATA LOST): docker volume rm <volume>"
+
+    if [[ -n "$POSTGRES_USER" && -n "$POSTGRES_PASSWORD" ]]; then
+        log_info "Using POSTGRES_USER/POSTGRES_PASSWORD provided through the environment."
+        return 0
+    fi
+    read -rp "Continue with newly generated database credentials anyway? (y/N): " pg_continue
+    if [[ ! "$pg_continue" =~ ^[yY]$ ]]; then
+        log_info "Installation aborted. No files were changed."
+        exit 1
+    fi
+}
+
+# Fills POSTGRES_USER/POSTGRES_PASSWORD missing from an old .env: earlier docker-compose.yml
+# defaults applied to an existing volume, otherwise fresh random values
+fill_missing_db_credentials() {
+    local has_volume=false
+    if [[ -n "$(find_existing_pgdata_volumes)" ]]; then
+        has_volume=true
+    fi
+    if [[ -z "$POSTGRES_USER" ]]; then
+        if [[ "$has_volume" == true ]]; then
+            POSTGRES_USER="$LEGACY_POSTGRES_USER"
+        else
+            POSTGRES_USER="exegese_$(generate_hex 4)"
+        fi
+    fi
+    if [[ -z "$POSTGRES_PASSWORD" ]]; then
+        if [[ "$has_volume" == true ]]; then
+            POSTGRES_PASSWORD="$LEGACY_POSTGRES_PASSWORD"
+        else
+            POSTGRES_PASSWORD=$(generate_password 32)
+        fi
+    fi
+}
+
+# Reads the values that must survive a reconfiguration from the existing .env
+load_preserved_settings() {
+    local key value
+    for key in POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD EXEGESE_AES_SECRET OLLAMA_BASE_URL OLLAMA_CHAT_MODEL; do
+        value=$(read_env_value "$key")
+        if [[ -n "$value" ]]; then
+            printf -v "$key" '%s' "$value"
+        fi
+    done
+    fill_missing_db_credentials
+    log_info "Preserving existing database credentials (POSTGRES_USER=${POSTGRES_USER}) and AES master key from .env."
+    if [[ "$POSTGRES_PASSWORD" == "$LEGACY_POSTGRES_PASSWORD" ]]; then
+        DB_PASSWORD_IS_DEFAULT=true
+        warn_default_db_password "$POSTGRES_USER" "${POSTGRES_DB:-$DEFAULT_POSTGRES_DB}"
+    fi
+}
+
+# Default CPU limit of the app container: the host CPU count, capped at MAX_DEFAULT_APP_CPUS (Docker refuses
+# to create a container whose CPU limit exceeds the host CPU count)
+default_app_cpus() {
+    local cpus
+    cpus=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
+    [[ "$cpus" =~ ^[0-9]+$ && "$cpus" -ge 1 ]] || cpus=1
+    if (( cpus > MAX_DEFAULT_APP_CPUS )); then
+        cpus=$MAX_DEFAULT_APP_CPUS
+    fi
+    printf '%s' "$cpus"
+}
+
+# Completes the database credentials, AES key and Ollama settings (generating what is missing)
+resolve_generated_settings() {
+    POSTGRES_DB="${POSTGRES_DB:-$DEFAULT_POSTGRES_DB}"
+    if [[ -z "$POSTGRES_USER" ]]; then
+        POSTGRES_USER="exegese_$(generate_hex 4)"
+        log_info "Generated database user: ${POSTGRES_USER}"
+    fi
+    if [[ -z "$POSTGRES_PASSWORD" ]]; then
+        POSTGRES_PASSWORD=$(generate_password 32)
+        log_info "Generated a random 32-character database password."
+    fi
+    if ! is_valid_aes_key "$EXEGESE_AES_SECRET"; then
+        if [[ -n "$EXEGESE_AES_SECRET" ]]; then
+            log_warn "EXEGESE_AES_SECRET is not the Base64 encoding of 32 bytes (earlier installers generated a hex"
+            log_warn "value that the application never used); generating a new key. Stored API keys are migrated automatically."
+        fi
+        EXEGESE_AES_SECRET=$(generate_aes_key)
+    fi
+    if [[ -z "$OLLAMA_BASE_URL" || "$OLLAMA_BASE_URL" == "$LEGACY_OLLAMA_BASE_URL" ]]; then
+        OLLAMA_BASE_URL="$DEFAULT_OLLAMA_BASE_URL"
+    fi
+    OLLAMA_CHAT_MODEL="${OLLAMA_CHAT_MODEL:-$DEFAULT_OLLAMA_CHAT_MODEL}"
+    # Resource limits and login policy: environment, else the previous .env (reconfiguration), else defaults
+    APP_CPUS="${APP_CPUS:-$(read_env_value APP_CPUS)}"
+    APP_CPUS="${APP_CPUS:-$(default_app_cpus)}"
+    APP_MEM_LIMIT="${APP_MEM_LIMIT:-$(read_env_value APP_MEM_LIMIT)}"
+    APP_MEM_LIMIT="${APP_MEM_LIMIT:-$DEFAULT_APP_MEM_LIMIT}"
+    REQUIRE_HOSTED_DOMAIN="${REQUIRE_HOSTED_DOMAIN:-$(read_env_value REQUIRE_HOSTED_DOMAIN)}"
+    REQUIRE_HOSTED_DOMAIN="${REQUIRE_HOSTED_DOMAIN:-true}"
+}
+
+# Brings an existing .env (kept without reconfiguration) up to the current requirements
+upgrade_existing_env() {
+    local env_user env_password env_db env_aes env_ollama
+    env_user=$(read_env_value POSTGRES_USER)
+    env_password=$(read_env_value POSTGRES_PASSWORD)
+    env_db=$(read_env_value POSTGRES_DB)
+    env_aes=$(read_env_value EXEGESE_AES_SECRET)
+    env_ollama=$(read_env_value OLLAMA_BASE_URL)
+
+    if [[ -z "$env_user" || -z "$env_password" ]]; then
+        POSTGRES_USER="$env_user"
+        POSTGRES_PASSWORD="$env_password"
+        fill_missing_db_credentials
+        [[ -z "$env_user" ]] && set_env_value POSTGRES_USER "$POSTGRES_USER"
+        [[ -z "$env_password" ]] && set_env_value POSTGRES_PASSWORD "$POSTGRES_PASSWORD"
+        env_user="$POSTGRES_USER"
+        env_password="$POSTGRES_PASSWORD"
+        log_info "Added the missing database credentials to .env (now required by docker-compose.yml)."
+    fi
+    if [[ -z "$env_db" ]]; then
+        env_db="$DEFAULT_POSTGRES_DB"
+        set_env_value POSTGRES_DB "$env_db"
+    fi
+    if ! is_valid_aes_key "$env_aes"; then
+        set_env_value EXEGESE_AES_SECRET "$(generate_aes_key)"
+        log_warn "EXEGESE_AES_SECRET in .env was missing or not the Base64 encoding of 32 bytes; a new key was generated."
+        log_info "The previous value was never read by the application. Stored API keys are re-encrypted automatically on startup."
+    fi
+    if [[ -z "$env_ollama" || "$env_ollama" == "$LEGACY_OLLAMA_BASE_URL" ]]; then
+        set_env_value OLLAMA_BASE_URL "$DEFAULT_OLLAMA_BASE_URL"
+    fi
+    if [[ -n "$APP_CPUS" ]]; then
+        set_env_value APP_CPUS "$APP_CPUS"
+    elif [[ -z "$(read_env_value APP_CPUS)" ]]; then
+        set_env_value APP_CPUS "$(default_app_cpus)"
+    fi
+    if [[ -n "$REQUIRE_HOSTED_DOMAIN" ]]; then
+        set_env_value REQUIRE_HOSTED_DOMAIN "$REQUIRE_HOSTED_DOMAIN"
+    elif [[ -z "$(read_env_value REQUIRE_HOSTED_DOMAIN)" ]]; then
+        set_env_value REQUIRE_HOSTED_DOMAIN true
+    fi
+    if [[ "$env_password" == "$LEGACY_POSTGRES_PASSWORD" ]]; then
+        DB_PASSWORD_IS_DEFAULT=true
+        POSTGRES_USER="$env_user"
+        POSTGRES_DB="$env_db"
+        warn_default_db_password "$env_user" "$env_db"
+    fi
+}
+
+is_valid_email() {
+    [[ "${1:-}" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]
+}
+
+# Ensures INITIAL_ADMIN_EMAIL holds a valid address chosen by the operator (no built-in default).
+# An optional argument is offered as the default answer (e.g. the value of an existing .env).
+require_initial_admin_email() {
+    local suggestion="${1:-}"
+    local answer=""
+    if [[ "$suggestion" == "$LEGACY_ADMIN_EMAIL" ]] || ! is_valid_email "$suggestion"; then
+        suggestion=""
+    fi
+    if [[ "$INITIAL_ADMIN_EMAIL" == "$LEGACY_ADMIN_EMAIL" ]]; then
+        log_warn "INITIAL_ADMIN_EMAIL=${LEGACY_ADMIN_EMAIL} is the former public default and is no longer accepted:"
+        log_warn "anyone controlling that domain could become administrator. Use your own Google account e-mail."
+        INITIAL_ADMIN_EMAIL=""
+    fi
+    while ! is_valid_email "$INITIAL_ADMIN_EMAIL"; do
+        if [[ -n "$INITIAL_ADMIN_EMAIL" ]]; then
+            log_warn "'${INITIAL_ADMIN_EMAIL}' is not a valid e-mail address."
+        fi
+        if [[ -n "$suggestion" ]]; then
+            read -rp "Initial Administrator Google e-mail (receives ROLE_ADMIN on first login) [${suggestion}]: " answer \
+                || { log_error "INITIAL_ADMIN_EMAIL is required (set it in the environment or with --initial-admin)."; exit 1; }
+            INITIAL_ADMIN_EMAIL="${answer:-$suggestion}"
+        else
+            read -rp "Initial Administrator Google e-mail (required; receives ROLE_ADMIN on first login): " answer \
+                || { log_error "INITIAL_ADMIN_EMAIL is required (set it in the environment or with --initial-admin)."; exit 1; }
+            INITIAL_ADMIN_EMAIL="$answer"
+        fi
+        if [[ "$INITIAL_ADMIN_EMAIL" == "$LEGACY_ADMIN_EMAIL" ]]; then
+            log_warn "${LEGACY_ADMIN_EMAIL} is not accepted. Use your own Google account e-mail."
+            INITIAL_ADMIN_EMAIL=""
+            suggestion=""
+        fi
+    done
 }
 
 is_port_in_use() {
@@ -265,8 +635,20 @@ configure_environment() {
             if [[ -z "$GOOGLE_CLIENT_SECRET" ]]; then
                 GOOGLE_CLIENT_SECRET=$(grep -E '^GOOGLE_CLIENT_SECRET=' .env | cut -d '=' -f2- || true)
             fi
+            local env_admin_email
+            env_admin_email=$(read_env_value INITIAL_ADMIN_EMAIL)
             if [[ -z "$INITIAL_ADMIN_EMAIL" ]]; then
-                INITIAL_ADMIN_EMAIL=$(grep -E '^INITIAL_ADMIN_EMAIL=' .env | cut -d '=' -f2- || echo "$DEFAULT_ADMIN_EMAIL")
+                INITIAL_ADMIN_EMAIL="$env_admin_email"
+            fi
+            require_initial_admin_email
+            if [[ "$INITIAL_ADMIN_EMAIL" != "$env_admin_email" ]]; then
+                set_env_value INITIAL_ADMIN_EMAIL "$INITIAL_ADMIN_EMAIL"
+                log_info "Updated INITIAL_ADMIN_EMAIL in .env."
+            fi
+            if [[ -n "$ALLOWED_EMAIL_DOMAINS" ]]; then
+                set_env_value ALLOWED_EMAIL_DOMAINS "$ALLOWED_EMAIL_DOMAINS"
+            else
+                ALLOWED_EMAIL_DOMAINS=$(read_env_value ALLOWED_EMAIL_DOMAINS)
             fi
             if [[ -z "$GEMINI_API_KEY" ]]; then
                 GEMINI_API_KEY=$(grep -E '^GEMINI_API_KEY=' .env | cut -d '=' -f2- || true)
@@ -280,8 +662,13 @@ configure_environment() {
             if [[ -z "$CEREBRAS_API_KEY" ]]; then
                 CEREBRAS_API_KEY=$(grep -E '^CEREBRAS_API_KEY=' .env | cut -d '=' -f2- || true)
             fi
+            upgrade_existing_env
             return 0
         fi
+        # Reconfiguration: the database volume and the stored API keys depend on these values
+        load_preserved_settings
+    else
+        warn_existing_pgdata_without_env
     fi
 
     log_info "Starting environment configuration wizard (.env)..."
@@ -350,9 +737,17 @@ configure_environment() {
         log_info "Google Client Secret configured via CLI parameter."
     fi
 
-    if [[ -z "$INITIAL_ADMIN_EMAIL" ]]; then
-        read -rp "Initial Administrator Email (receives ROLE_ADMIN on first login) [${DEFAULT_ADMIN_EMAIL}]: " input_admin
-        INITIAL_ADMIN_EMAIL=${input_admin:-$DEFAULT_ADMIN_EMAIL}
+    require_initial_admin_email "$(read_env_value INITIAL_ADMIN_EMAIL)"
+
+    if [[ -z "$ALLOWED_EMAIL_DOMAINS" ]]; then
+        local previous_domains
+        previous_domains=$(read_env_value ALLOWED_EMAIL_DOMAINS)
+        read -rp "Allowed Google e-mail domains, comma-separated (empty = any verified Google account)${previous_domains:+ [${previous_domains}]}: " input_domains
+        ALLOWED_EMAIL_DOMAINS=${input_domains:-$previous_domains}
+    fi
+    if [[ -n "$ALLOWED_EMAIL_DOMAINS" ]]; then
+        log_info "Only Google accounts managed by these Google Workspace domains will sign in (hd claim). If a domain's"
+        log_info "mail is not hosted on Google Workspace, set REQUIRE_HOSTED_DOMAIN=false in .env (e-mail match only)."
     fi
 
     # Calculate Redirect URI for Google Cloud Console
@@ -401,20 +796,23 @@ configure_environment() {
         echo ""
     fi
 
-    local AES_SECRET
-    AES_SECRET=$(generate_random_secret)
+    resolve_generated_settings
 
+    # Create the file with restricted permissions before any secret is written to it
+    ( umask 077 && : > .env )
+    chmod 600 .env
     cat > .env << EOF
 # ==============================================================================
 # Environment Configuration - Exegese AI
 # Automatically generated by install.sh on $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 # ==============================================================================
 
-# PostgreSQL 17 + pgvector Database
-POSTGRES_DB=exegese_db
-POSTGRES_USER=exegese_user
-POSTGRES_PASSWORD=exegese_password
-POSTGRES_PORT=5432
+# PostgreSQL 17 + pgvector Database (not published on the host; reachable only on exegese-net)
+# Generated on first install and preserved on reconfiguration: the data volume keeps the
+# credentials it was initialized with (change them with ALTER USER, then update this file)
+POSTGRES_DB=${POSTGRES_DB}
+POSTGRES_USER=${POSTGRES_USER}
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 
 # Web Server & NGINX Reverse Proxy (SWAG)
 SERVER_NAME=${HOST_NAME}
@@ -424,11 +822,17 @@ HTTPS_PORT=${HTTPS_PORT}
 LETSENCRYPT_EMAIL=${EMAIL_SSL}
 PORT=8080
 
-# Master AES-256 Cryptographic Key (Randomly generated)
-EXEGESE_AES_SECRET=${AES_SECRET}
+# Master AES-256 key for API keys stored in the database: Base64 of 32 random bytes.
+# Back it up and keep it stable: changing or losing it makes the stored API keys unreadable.
+EXEGESE_AES_SECRET=${EXEGESE_AES_SECRET}
 
-# Initial Administrator
+# Initial Administrator: promoted to ROLE_ADMIN on login while no administrator exists yet
 INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL}
+# Google e-mail domains allowed to sign in (comma-separated; empty = any verified Google account)
+ALLOWED_EMAIL_DOMAINS=${ALLOWED_EMAIL_DOMAINS}
+# With ALLOWED_EMAIL_DOMAINS: require accounts managed by that Google Workspace domain (hd claim).
+# Set to false only when the domain's mail is not hosted on Google Workspace.
+REQUIRE_HOSTED_DOMAIN=${REQUIRE_HOSTED_DOMAIN}
 
 # ==============================================================================
 # Google OAuth2 / OIDC Authentication
@@ -447,7 +851,17 @@ ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 CEREBRAS_API_KEY=${CEREBRAS_API_KEY}
 NVIDIA_API_KEY=
 DEEPSEEK_API_KEY=
-OLLAMA_BASE_URL=http://localhost:11434
+
+# Optional local Ollama (docker-compose.override.ai*.yml), reached on the internal network
+OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
+OLLAMA_CHAT_MODEL=${OLLAMA_CHAT_MODEL}
+
+# Resource limits of the app container. APP_CPUS must not exceed the host CPU count (0 = no CPU limit)
+APP_CPUS=${APP_CPUS}
+APP_MEM_LIMIT=${APP_MEM_LIMIT}
+
+# NGINX site generated by install.sh with the configured ports (docker/proxy/config/<file>, untracked)
+PROXY_SITE_CONFIG=${PROXY_SITE_CONFIG_FILE}
 EOF
 
     chmod 600 .env
@@ -467,10 +881,14 @@ configure_nginx_proxy() {
         forwarded_port="${target_https_port}"
     fi
 
+    # Written to an untracked file: the tracked template docker/proxy/config/default is never modified, so
+    # 'git pull' keeps working on installations with custom ports
     mkdir -p docker/proxy/config
-    cat > docker/proxy/config/default << EOF
+    cat > "docker/proxy/config/${PROXY_SITE_CONFIG_FILE}" << EOF
 # ==============================================================================
-# Exegese AI - NGINX Site Configuration (Generated dynamically by install.sh)
+# Exegese AI - NGINX Site Configuration (SWAG / LinuxServer.io)
+# Mounted by docker-compose.yml as /config/nginx/site-confs/default.conf (SWAG only loads *.conf).
+# Regenerated by install.sh (configure_nginx_proxy) with the configured ports: keep both identical.
 # ==============================================================================
 
 # HTTP Block: Automatic redirect to HTTPS
@@ -496,8 +914,13 @@ server {
 
     client_max_body_size 10M;
 
-    # 1. SSE Streaming Route for RAG (Mandatory buffering deactivation)
-    location /api/chat/stream {
+    # Edge proxy: X-Forwarded-For is OVERWRITTEN with the real client address (never appended to a
+    # client-supplied value), so the app (Tomcat RemoteIpValve) cannot be fooled by a spoofed header.
+    # Security headers (CSP, Referrer-Policy, Permissions-Policy, ...) are set by the application.
+
+    # 1. SSE Streaming Route for RAG: GET /api/chat/stream/{streamId} (buffering must be off).
+    #    POST /api/chat/messages is a short JSON request and goes through the general route.
+    location /api/chat/stream/ {
         proxy_pass http://app:8080;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -507,11 +930,10 @@ server {
         chunked_transfer_encoding off;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
-        proxy_set_header X-Accel-Buffering no;
 
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For \$remote_addr;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header X-Forwarded-Port ${forwarded_port};
     }
@@ -523,18 +945,18 @@ server {
 
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For \$remote_addr;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header X-Forwarded-Port ${forwarded_port};
     }
 
-    # 3. General Application Route (Spring Boot Web UI and APIs)
+    # 3. General Application Route (Spring Boot Web UI and APIs, including POST /api/chat/messages)
     location / {
         proxy_pass http://app:8080;
 
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For \$remote_addr;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header X-Forwarded-Port ${forwarded_port};
     }
@@ -542,9 +964,10 @@ server {
 
 # enable subdomain method reverse proxy confs
 include /config/nginx/proxy-confs/*.subdomain.conf;
-# enable proxy cache for auth
-proxy_cache_path cache/ keys_zone=auth_cache:10m;
 EOF
+    if [[ -f .env && "$(read_env_value PROXY_SITE_CONFIG)" != "$PROXY_SITE_CONFIG_FILE" ]]; then
+        set_env_value PROXY_SITE_CONFIG "$PROXY_SITE_CONFIG_FILE"
+    fi
     log_success "NGINX configuration dynamically generated for HTTP port ${target_http_port} and HTTPS port ${target_https_port}."
 }
 
@@ -571,6 +994,7 @@ configure_firewall() {
 
             echo -e "${CLR_YELLOW}${CLR_BOLD}[FIREWALL NOTICE]${CLR_RESET} Configuring UFW ingress rules for ports ${target_http_port}/tcp (HTTP) and ${target_https_port}/tcp (HTTPS)..."
 
+            # shellcheck disable=SC2086 # cmd_prefix is intentionally empty or "sudo "
             if ${cmd_prefix}ufw allow "${target_http_port}/tcp" comment 'Exegese AI HTTP' &> /dev/null && \
                ${cmd_prefix}ufw allow "${target_https_port}/tcp" comment 'Exegese AI HTTPS' &> /dev/null; then
                 log_success "Ubuntu UFW rules successfully applied: ${target_http_port}/tcp and ${target_https_port}/tcp are open."
@@ -674,6 +1098,10 @@ print_summary() {
     echo -e "  spring.security.oauth2.client.registration.google.client-id:     ${CLR_CYAN}${GOOGLE_CLIENT_ID:-(not provided)}${CLR_RESET}"
     echo -e "  spring.security.oauth2.client.registration.google.client-secret: ${CLR_CYAN}${GOOGLE_CLIENT_SECRET:+[CONFIGURED]}${CLR_RESET}"
     echo ""
+    echo -e "${CLR_BOLD}Secrets:${CLR_RESET}"
+    echo "  Database credentials and the AES master key (EXEGESE_AES_SECRET) are stored only in .env (chmod 600)."
+    echo "  Back up .env securely: without EXEGESE_AES_SECRET the API keys saved in the admin panel cannot be decrypted."
+    echo ""
     echo -e "${CLR_BOLD}Firewall Configuration (Ubuntu UFW):${CLR_RESET}"
     echo -e "  Open HTTP Port:              ${CLR_CYAN}sudo ufw allow ${HTTP_PORT:-80}/tcp comment 'Exegese AI HTTP'${CLR_RESET}"
     echo -e "  Open HTTPS Port:             ${CLR_CYAN}sudo ufw allow ${HTTPS_PORT:-443}/tcp comment 'Exegese AI HTTPS'${CLR_RESET}"
@@ -688,10 +1116,18 @@ print_summary() {
     echo -e "${CLR_YELLOW}Important:${CLR_RESET} Upon logging in for the first time with the configured email (${INITIAL_ADMIN_EMAIL}),"
     echo "the ROLE_ADMIN authority will be automatically assigned to you to manage the system."
     echo ""
+    if [[ "$DB_PASSWORD_IS_DEFAULT" == true ]]; then
+        warn_default_db_password "${POSTGRES_USER:-$LEGACY_POSTGRES_USER}" "${POSTGRES_DB:-$DEFAULT_POSTGRES_DB}"
+    fi
 }
 
 main() {
     parse_arguments "$@"
+
+    if [[ "$FLAG_SECRET_ON_CLI" == true ]]; then
+        log_warn "Secrets were passed as command-line flags: they are visible in 'ps' and stored in your shell history."
+        log_warn "Prefer environment variables (see ./install.sh --help) and consider clearing the history entry."
+    fi
 
     if [[ "$FLAG_UNINSTALL" == true ]]; then
         uninstall_environment

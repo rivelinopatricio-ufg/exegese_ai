@@ -1,15 +1,21 @@
 # Optional file for local Ollama service execution
-version: "3.8"
+# Usage: docker compose -f docker-compose.yml -f docker-compose.override.ai.yml up -d
+# Ollama has no authentication, so its port is NOT published: the app reaches it as
+# http://ollama:11434 on the internal exegese-net network (Docker-published ports bypass UFW).
+# The chat model pulled on startup is OLLAMA_CHAT_MODEL (default: llama3.2); select the
+# "Ollama Local" provider in the admin panel to use it.
 services:
   ollama:
     container_name: exegese_ollama
-    image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
+    image: ollama/ollama:0.40.1
+    environment:
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-llama3.2}
     volumes:
       - ollama_data:/root/.ollama
-      - ./ollama_init.sh:/ollama_init.sh
+      - ./ollama_init.sh:/ollama_init.sh:ro
     entrypoint: ["/usr/bin/bash", "/ollama_init.sh"]
+    networks:
+      - exegese-net
     restart: unless-stopped
 
 volumes:

@@ -90,7 +90,7 @@ class MultiProviderModelIntegrationTest {
         providerRouter.updateConfig(
                 ModelProvider.CLAUDE,
                 "Anthropic Claude",
-                "claude-3-7-sonnet",
+                "claude-sonnet-5-5",
                 "https://api.anthropic.com",
                 secretKey,
                 new BigDecimal("0.10"),
@@ -159,6 +159,28 @@ class MultiProviderModelIntegrationTest {
         mockMvc.perform(post("/admin/models/CEREBRAS/ping")
                         .with(csrf()))
                 .andExpect(status().is3xxRedirection());
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    @DisplayName("A stored key that cannot be decrypted (lost master key) is ignored: env fallback, admin page renders, key can be re-entered")
+    void testUndecryptableStoredKeyIsIgnored() throws Exception {
+        // Ciphertext produced with another master key: same v1 format, authentication tag cannot match
+        byte[] foreign = new byte[48];
+        new java.security.SecureRandom().nextBytes(foreign);
+        AiModelConfig gemini = modelConfigRepository.findByProvider(ModelProvider.GEMINI).orElseThrow();
+        gemini.setApiKeyEncrypted("v1:" + java.util.Base64.getEncoder().encodeToString(foreign));
+        modelConfigRepository.saveAndFlush(gemini);
+
+        // Falls back to the environment/configuration key (exegese.gemini.api-key in the test profile)
+        assertThat(providerRouter.resolveApiKey(ModelProvider.GEMINI)).isEqualTo("test-gemini-chat-key");
+        assertThat(providerRouter.hasConfiguredKey(ModelProvider.GEMINI)).isTrue();
+
+        mockMvc.perform(get("/admin/models"))
+                .andExpect(status().isOk());
+
+        providerRouter.updateConfig(ModelProvider.GEMINI, null, null, null, "AIza-re-entered-key", null, null);
+        assertThat(providerRouter.resolveApiKey(ModelProvider.GEMINI)).isEqualTo("AIza-re-entered-key");
     }
 
     @Test

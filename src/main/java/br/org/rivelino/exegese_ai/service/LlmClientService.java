@@ -24,28 +24,46 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PreDestroy;
+
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 import br.org.rivelino.exegese_ai.domain.entity.AiModelConfig;
 import br.org.rivelino.exegese_ai.domain.enums.ModelProvider;
 
 /**
  * Service orchestrating streaming inference across supported multi-model AI ecosystems.
+ * <p>
+ * Every outbound call first resolves the provider base URL through {@link LlmEndpointPolicy}: a URL that
+ * is not https or whose host is outside the provider allowlist is refused before the API key leaves the
+ * application. HTTP redirects are never followed.
+ * <p>
+ * The HTTP request timeout only bounds the wait for the response headers, so reading a streamed body is
+ * guarded separately: a watchdog interrupts the reading thread when no line arrives for
+ * {@link #BODY_IDLE_TIMEOUT} or the body is still open after {@link #BODY_DEADLINE} (below the SSE emitter
+ * timeout), so a stalled upstream can never pin the chat worker and its concurrency permit.
  *
  * @author Rivelino Patrício
  */
@@ -54,13 +72,50 @@ public class LlmClientService {
 
     private static final Logger log = LoggerFactory.getLogger(LlmClientService.class);
 
-    private final ObjectMapper objectMapper;
-    private final HttpClient httpClient;
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(15);
+    private static final Duration STREAM_TIMEOUT = Duration.ofSeconds(60);
+    private static final Duration PING_TIMEOUT = Duration.ofSeconds(10);
+    /** Longest silence accepted between two lines of a streamed response body. */
+    static final Duration BODY_IDLE_TIMEOUT = Duration.ofSeconds(60);
+    /** Upper bound for reading a whole streamed response body (below ChatStreamService.STREAM_TIMEOUT_MS). */
+    static final Duration BODY_DEADLINE = Duration.ofSeconds(170);
+    private static final Duration WATCHDOG_TICK = Duration.ofSeconds(5);
+    private static final String ANTHROPIC_VERSION = "2023-06-01";
 
-    public LlmClientService(ObjectMapper objectMapper) {
+    private final JsonMapper objectMapper;
+    private final LlmEndpointPolicy endpointPolicy;
+    private final HttpClient httpClient;
+    private final HttpClient pingHttpClient;
+    private final Duration bodyIdleTimeout;
+    private final Duration bodyDeadline;
+    private final Duration watchdogTick;
+    private final ScheduledThreadPoolExecutor watchdog;
+
+    @Autowired
+    public LlmClientService(JsonMapper objectMapper, LlmEndpointPolicy endpointPolicy) {
+        this(objectMapper, endpointPolicy, BODY_IDLE_TIMEOUT, BODY_DEADLINE, WATCHDOG_TICK);
+    }
+
+    LlmClientService(JsonMapper objectMapper, LlmEndpointPolicy endpointPolicy,
+                     Duration bodyIdleTimeout, Duration bodyDeadline, Duration watchdogTick) {
         this.objectMapper = objectMapper;
+        this.endpointPolicy = endpointPolicy;
+        this.bodyIdleTimeout = bodyIdleTimeout;
+        this.bodyDeadline = bodyDeadline;
+        this.watchdogTick = watchdogTick;
+        this.watchdog = new ScheduledThreadPoolExecutor(1, runnable -> {
+            Thread thread = new Thread(runnable, "llm-stream-watchdog");
+            thread.setDaemon(true);
+            return thread;
+        });
+        this.watchdog.setRemoveOnCancelPolicy(true);
         this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(15))
+                .connectTimeout(CONNECT_TIMEOUT)
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .build();
+        this.pingHttpClient = HttpClient.newBuilder()
+                .connectTimeout(PING_TIMEOUT)
+                .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
     }
 
@@ -90,12 +145,21 @@ public class LlmClientService {
             return false;
         }
 
+        String baseUrl;
+        try {
+            baseUrl = endpointPolicy.resolveBaseUrl(provider, config.getBaseUrl());
+        } catch (LlmEndpointRejectedException e) {
+            log.warn("Refusing LLM call for provider {}: configured base URL violates the endpoint policy ({})",
+                    provider, e.getReason());
+            return false;
+        }
+
         try {
             return switch (provider) {
-                case GEMINI -> streamGemini(config, apiKey, systemPrompt, userPrompt, tokenConsumer);
-                case CLAUDE -> streamClaude(config, apiKey, systemPrompt, userPrompt, tokenConsumer);
+                case GEMINI -> streamGemini(config, baseUrl, apiKey, systemPrompt, userPrompt, tokenConsumer);
+                case CLAUDE -> streamClaude(config, baseUrl, apiKey, systemPrompt, userPrompt, tokenConsumer);
                 case OPENAI, CEREBRAS, DEEPSEEK, NEMOTRON, OLLAMA_LOCAL ->
-                        streamOpenAiCompatible(config, apiKey, systemPrompt, userPrompt, tokenConsumer);
+                        streamOpenAiCompatible(config, baseUrl, apiKey, systemPrompt, userPrompt, tokenConsumer);
             };
         } catch (IOException e) {
             log.error("I/O error during LLM streaming for provider {}: {}", provider, e.getMessage());
@@ -104,27 +168,126 @@ public class LlmClientService {
             log.warn("LLM streaming interrupted for provider {}: {}", provider, e.getMessage());
             Thread.currentThread().interrupt();
             return false;
+        } catch (ChatStreamCancelledException e) {
+            // Raised by the token consumer; leaving the lines stream closed the upstream HTTP connection
+            log.debug("LLM streaming for provider {} aborted: client disconnected", provider);
+            return false;
         } catch (RuntimeException e) {
             log.error("Runtime error during LLM streaming for provider {}: {}", provider, e.getMessage(), e);
             return false;
         }
     }
 
+    /**
+     * Tests connectivity with a minimal, token-free request: the model metadata endpoint for Gemini and
+     * Claude, the model list for OpenAI-compatible providers. Only the HTTP status is inspected; the response
+     * body is discarded. The request times out after 10 seconds.
+     *
+     * @param config Provider configuration
+     * @param apiKey Decrypted API key (may be empty for Ollama)
+     * @return Outcome of the test
+     */
+    public LlmPingResult ping(AiModelConfig config, String apiKey) {
+        ModelProvider provider = config.getProvider();
+        if (provider != ModelProvider.OLLAMA_LOCAL && (apiKey == null || apiKey.isBlank())) {
+            return LlmPingResult.of(LlmPingResult.Status.NOT_CONFIGURED);
+        }
+
+        String baseUrl;
+        try {
+            baseUrl = endpointPolicy.resolveBaseUrl(provider, config.getBaseUrl());
+        } catch (LlmEndpointRejectedException e) {
+            log.warn("Ping refused for provider {}: base URL violates the endpoint policy ({})", provider, e.getReason());
+            return LlmPingResult.of(LlmPingResult.Status.ENDPOINT_REJECTED);
+        }
+
+        try {
+            HttpRequest.Builder builder = HttpRequest.newBuilder().timeout(PING_TIMEOUT).GET();
+            String model = config.getModelName() != null ? config.getModelName().trim() : "";
+            switch (provider) {
+                case GEMINI -> builder.uri(URI.create(baseUrl + "/v1beta/models/" + model))
+                        .header("x-goog-api-key", apiKey.trim());
+                case CLAUDE -> builder.uri(URI.create(anthropicRoot(baseUrl) + "/v1/models/" + model))
+                        .header("x-api-key", apiKey.trim())
+                        .header("anthropic-version", ANTHROPIC_VERSION);
+                case OPENAI, CEREBRAS, DEEPSEEK, NEMOTRON, OLLAMA_LOCAL -> {
+                    builder.uri(URI.create(openAiApiRoot(baseUrl) + "/models"));
+                    if (apiKey != null && !apiKey.isBlank()) {
+                        builder.header("Authorization", "Bearer " + apiKey.trim());
+                    }
+                }
+            }
+
+            HttpResponse<Void> response = pingHttpClient.send(builder.build(), HttpResponse.BodyHandlers.discarding());
+            LlmPingResult result = LlmPingResult.fromHttpStatus(response.statusCode());
+            log.info("Ping of provider {} answered HTTP {}", provider, response.statusCode());
+            return result;
+        } catch (HttpTimeoutException e) {
+            log.warn("Ping of provider {} timed out after {} s", provider, PING_TIMEOUT.toSeconds());
+            return LlmPingResult.of(LlmPingResult.Status.TIMEOUT);
+        } catch (IOException e) {
+            log.warn("Ping of provider {} failed: {}", provider, e.getClass().getSimpleName());
+            return LlmPingResult.of(LlmPingResult.Status.UNREACHABLE);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return LlmPingResult.of(LlmPingResult.Status.ERROR);
+        } catch (IllegalArgumentException e) {
+            log.warn("Ping of provider {} could not build the request URI", provider);
+            return LlmPingResult.of(LlmPingResult.Status.ERROR);
+        }
+    }
+
+    @PreDestroy
+    void shutdownWatchdog() {
+        watchdog.shutdownNow();
+    }
+
+    /**
+     * Reads a streamed response body line by line under the idle/deadline watchdog. When the upstream stalls
+     * the reading thread is interrupted, which makes the blocked read fail with an
+     * {@link java.io.UncheckedIOException} (handled by {@link #streamInference} as a failed stream).
+     */
+    private void consumeLines(Stream<String> lines, Consumer<String> onLine) {
+        Thread reader = Thread.currentThread();
+        long started = System.nanoTime();
+        AtomicLong lastLine = new AtomicLong(started);
+        AtomicBoolean expired = new AtomicBoolean(false);
+        long tickMillis = Math.max(1, watchdogTick.toMillis());
+        ScheduledFuture<?> guard = watchdog.scheduleAtFixedRate(() -> {
+            long now = System.nanoTime();
+            if (now - lastLine.get() > bodyIdleTimeout.toNanos() || now - started > bodyDeadline.toNanos()) {
+                if (expired.compareAndSet(false, true)) {
+                    reader.interrupt();
+                }
+            }
+        }, tickMillis, tickMillis, TimeUnit.MILLISECONDS);
+        try (lines) {
+            lines.forEach(line -> {
+                lastLine.set(System.nanoTime());
+                onLine.accept(line);
+            });
+        } catch (RuntimeException e) {
+            if (expired.get()) {
+                log.warn("LLM response body stalled (no data for {} s or open for more than {} s); stream aborted",
+                        bodyIdleTimeout.toSeconds(), bodyDeadline.toSeconds());
+            }
+            throw e;
+        } finally {
+            guard.cancel(false);
+            if (expired.get()) {
+                // Clear the watchdog interrupt so that the work that follows (persistence, SSE) is not affected
+                Thread.interrupted();
+            }
+        }
+    }
+
     private boolean streamGemini(AiModelConfig config,
+                                 String baseUrl,
                                  String apiKey,
                                  String systemPrompt,
                                  String userPrompt,
                                  Consumer<String> tokenConsumer) throws IOException, InterruptedException {
-        String modelName = config.getModelName();
-        if (modelName == null || modelName.isBlank() || "gemini-2.5-flash".equalsIgnoreCase(modelName)) {
-            modelName = "gemini-3.5-flash-lite";
-        }
-
-        String baseUrl = config.getBaseUrl() != null && !config.getBaseUrl().isBlank()
-                ? config.getBaseUrl().replaceAll("/+$", "")
-                : "https://generativelanguage.googleapis.com";
-
-        String endpoint = baseUrl + "/v1beta/models/" + modelName + ":streamGenerateContent?alt=sse";
+        String endpoint = baseUrl + "/v1beta/models/" + config.getModelName().trim() + ":streamGenerateContent?alt=sse";
 
         Map<String, Object> req = new LinkedHashMap<>();
         if (systemPrompt != null && !systemPrompt.isBlank()) {
@@ -154,7 +317,7 @@ public class LlmClientService {
                 .uri(URI.create(endpoint))
                 .header("Content-Type", "application/json")
                 .header("x-goog-api-key", apiKey.trim())
-                .timeout(Duration.ofSeconds(60))
+                .timeout(STREAM_TIMEOUT)
                 .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
                 .build();
 
@@ -162,67 +325,58 @@ public class LlmClientService {
 
         HttpResponse<Stream<String>> response = httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
         if (response.statusCode() != 200) {
-            log.error("Gemini API returned HTTP status {}: {}", response.statusCode(), endpoint);
+            response.body().close();
+            log.error("Gemini API returned HTTP status {} for model {}", response.statusCode(), config.getModelName());
             return false;
         }
 
-        try (Stream<String> lines = response.body()) {
-            lines.forEach(line -> {
-                if (line.startsWith("data: ")) {
-                    String data = line.substring(6).trim();
-                    if (!data.isEmpty()) {
-                        parseGeminiDataChunk(data, tokenConsumer, hasEmitted);
-                    }
+        consumeLines(response.body(), line -> {
+            if (line.startsWith("data: ")) {
+                String data = line.substring(6).trim();
+                if (!data.isEmpty()) {
+                    parseGeminiDataChunk(data, tokenConsumer, hasEmitted);
                 }
-            });
-        }
+            }
+        });
 
         return hasEmitted.get();
     }
 
     private void parseGeminiDataChunk(String data, Consumer<String> tokenConsumer, AtomicBoolean hasEmitted) {
+        JsonNode root;
         try {
-            JsonNode root = objectMapper.readTree(data);
-            JsonNode candidates = root.get("candidates");
-            if (candidates != null && candidates.isArray() && !candidates.isEmpty()) {
-                JsonNode content = candidates.get(0).get("content");
-                if (content != null && content.has("parts")) {
-                    JsonNode parts = content.get("parts");
-                    if (parts.isArray()) {
-                        for (JsonNode part : parts) {
-                            if (part.has("text")) {
-                                String text = part.get("text").asText();
-                                if (text != null && !text.isEmpty()) {
-                                    tokenConsumer.accept(text);
-                                    hasEmitted.set(true);
-                                }
+            root = objectMapper.readTree(data);
+        } catch (JacksonException e) {
+            log.warn("Failed to parse Gemini SSE data chunk: {}", e.getOriginalMessage());
+            return;
+        }
+        JsonNode candidates = root.get("candidates");
+        if (candidates != null && candidates.isArray() && !candidates.isEmpty()) {
+            JsonNode content = candidates.get(0).get("content");
+            if (content != null && content.has("parts")) {
+                JsonNode parts = content.get("parts");
+                if (parts.isArray()) {
+                    for (JsonNode part : parts) {
+                        if (part.has("text")) {
+                            String text = part.get("text").asString();
+                            if (text != null && !text.isEmpty()) {
+                                tokenConsumer.accept(text);
+                                hasEmitted.set(true);
                             }
                         }
                     }
                 }
             }
-        } catch (JsonProcessingException e) {
-            log.warn("Failed to parse Gemini SSE data chunk: {}", e.getMessage());
         }
     }
 
     private boolean streamOpenAiCompatible(AiModelConfig config,
+                                           String baseUrl,
                                            String apiKey,
                                            String systemPrompt,
                                            String userPrompt,
                                            Consumer<String> tokenConsumer) throws IOException, InterruptedException {
-        String baseUrl = config.getBaseUrl() != null && !config.getBaseUrl().isBlank()
-                ? config.getBaseUrl().replaceAll("/+$", "")
-                : "https://api.openai.com/v1";
-
-        String endpoint;
-        if (baseUrl.endsWith("/chat/completions")) {
-            endpoint = baseUrl;
-        } else if (baseUrl.endsWith("/v1")) {
-            endpoint = baseUrl + "/chat/completions";
-        } else {
-            endpoint = baseUrl + "/v1/chat/completions";
-        }
+        String endpoint = baseUrl.endsWith("/chat/completions") ? baseUrl : openAiApiRoot(baseUrl) + "/chat/completions";
 
         List<Map<String, String>> messages = new ArrayList<>();
         if (systemPrompt != null && !systemPrompt.isBlank()) {
@@ -235,11 +389,14 @@ public class LlmClientService {
         req.put("messages", messages);
         req.put("stream", true);
 
-        if (config.getTemperature() != null) {
+        boolean openAi = config.getProvider() == ModelProvider.OPENAI;
+        // OpenAI reasoning models (gpt-5, o-series) only accept the default temperature
+        if (config.getTemperature() != null && !(openAi && isOpenAiReasoningModel(config.getModelName()))) {
             req.put("temperature", config.getTemperature());
         }
         if (config.getMaxTokens() != null) {
-            req.put("max_tokens", config.getMaxTokens());
+            // OpenAI deprecated max_tokens (rejected by reasoning models); compatible providers still expect it
+            req.put(openAi ? "max_completion_tokens" : "max_tokens", config.getMaxTokens());
         }
 
         String jsonBody = objectMapper.writeValueAsString(req);
@@ -247,7 +404,7 @@ public class LlmClientService {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(endpoint))
                 .header("Content-Type", "application/json")
-                .timeout(Duration.ofSeconds(60))
+                .timeout(STREAM_TIMEOUT)
                 .POST(HttpRequest.BodyPublishers.ofString(jsonBody));
 
         if (apiKey != null && !apiKey.isBlank()) {
@@ -258,53 +415,52 @@ public class LlmClientService {
 
         HttpResponse<Stream<String>> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofLines());
         if (response.statusCode() != 200) {
-            log.error("OpenAI-compatible API returned HTTP status {}: {}", response.statusCode(), endpoint);
+            response.body().close();
+            log.error("OpenAI-compatible API ({}) returned HTTP status {} for model {}",
+                    config.getProvider(), response.statusCode(), config.getModelName());
             return false;
         }
 
-        try (Stream<String> lines = response.body()) {
-            lines.forEach(line -> {
-                if (line.startsWith("data: ")) {
-                    String data = line.substring(6).trim();
-                    if (!data.isEmpty() && !"[DONE]".equals(data)) {
-                        parseOpenAiDataChunk(data, tokenConsumer, hasEmitted);
-                    }
+        consumeLines(response.body(), line -> {
+            if (line.startsWith("data: ")) {
+                String data = line.substring(6).trim();
+                if (!data.isEmpty() && !"[DONE]".equals(data)) {
+                    parseOpenAiDataChunk(data, tokenConsumer, hasEmitted);
                 }
-            });
-        }
+            }
+        });
 
         return hasEmitted.get();
     }
 
     private void parseOpenAiDataChunk(String data, Consumer<String> tokenConsumer, AtomicBoolean hasEmitted) {
+        JsonNode root;
         try {
-            JsonNode root = objectMapper.readTree(data);
-            JsonNode choices = root.get("choices");
-            if (choices != null && choices.isArray() && !choices.isEmpty()) {
-                JsonNode delta = choices.get(0).get("delta");
-                if (delta != null && delta.has("content") && !delta.get("content").isNull()) {
-                    String content = delta.get("content").asText();
-                    if (content != null && !content.isEmpty()) {
-                        tokenConsumer.accept(content);
-                        hasEmitted.set(true);
-                    }
+            root = objectMapper.readTree(data);
+        } catch (JacksonException e) {
+            log.warn("Failed to parse OpenAI-compatible SSE data chunk: {}", e.getOriginalMessage());
+            return;
+        }
+        JsonNode choices = root.get("choices");
+        if (choices != null && choices.isArray() && !choices.isEmpty()) {
+            JsonNode delta = choices.get(0).get("delta");
+            if (delta != null && delta.has("content") && !delta.get("content").isNull()) {
+                String content = delta.get("content").asString();
+                if (content != null && !content.isEmpty()) {
+                    tokenConsumer.accept(content);
+                    hasEmitted.set(true);
                 }
             }
-        } catch (JsonProcessingException e) {
-            log.warn("Failed to parse OpenAI-compatible SSE data chunk: {}", e.getMessage());
         }
     }
 
     private boolean streamClaude(AiModelConfig config,
+                                 String baseUrl,
                                  String apiKey,
                                  String systemPrompt,
                                  String userPrompt,
                                  Consumer<String> tokenConsumer) throws IOException, InterruptedException {
-        String baseUrl = config.getBaseUrl() != null && !config.getBaseUrl().isBlank()
-                ? config.getBaseUrl().replaceAll("/+$", "")
-                : "https://api.anthropic.com";
-
-        String endpoint = baseUrl.endsWith("/v1/messages") ? baseUrl : baseUrl + "/v1/messages";
+        String endpoint = anthropicRoot(baseUrl) + "/v1/messages";
 
         Map<String, Object> req = new LinkedHashMap<>();
         req.put("model", config.getModelName());
@@ -324,8 +480,8 @@ public class LlmClientService {
                 .uri(URI.create(endpoint))
                 .header("Content-Type", "application/json")
                 .header("x-api-key", apiKey.trim())
-                .header("anthropic-version", "2023-06-01")
-                .timeout(Duration.ofSeconds(60))
+                .header("anthropic-version", ANTHROPIC_VERSION)
+                .timeout(STREAM_TIMEOUT)
                 .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
                 .build();
 
@@ -333,40 +489,64 @@ public class LlmClientService {
 
         HttpResponse<Stream<String>> response = httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
         if (response.statusCode() != 200) {
-            log.error("Claude API returned HTTP status {}: {}", response.statusCode(), endpoint);
+            response.body().close();
+            log.error("Claude API returned HTTP status {} for model {}", response.statusCode(), config.getModelName());
             return false;
         }
 
-        try (Stream<String> lines = response.body()) {
-            lines.forEach(line -> {
-                if (line.startsWith("data: ")) {
-                    String data = line.substring(6).trim();
-                    if (!data.isEmpty()) {
-                        parseClaudeDataChunk(data, tokenConsumer, hasEmitted);
-                    }
+        consumeLines(response.body(), line -> {
+            if (line.startsWith("data: ")) {
+                String data = line.substring(6).trim();
+                if (!data.isEmpty()) {
+                    parseClaudeDataChunk(data, tokenConsumer, hasEmitted);
                 }
-            });
-        }
+            }
+        });
 
         return hasEmitted.get();
     }
 
     private void parseClaudeDataChunk(String data, Consumer<String> tokenConsumer, AtomicBoolean hasEmitted) {
+        JsonNode root;
         try {
-            JsonNode root = objectMapper.readTree(data);
-            String type = root.has("type") ? root.get("type").asText() : "";
-            if ("content_block_delta".equals(type) && root.has("delta")) {
-                JsonNode delta = root.get("delta");
-                if (delta.has("text")) {
-                    String text = delta.get("text").asText();
-                    if (text != null && !text.isEmpty()) {
-                        tokenConsumer.accept(text);
-                        hasEmitted.set(true);
-                    }
+            root = objectMapper.readTree(data);
+        } catch (JacksonException e) {
+            log.warn("Failed to parse Claude SSE data chunk: {}", e.getOriginalMessage());
+            return;
+        }
+        String type = root.has("type") ? root.get("type").asString() : "";
+        if ("content_block_delta".equals(type) && root.has("delta")) {
+            JsonNode delta = root.get("delta");
+            if (delta.has("text")) {
+                String text = delta.get("text").asString();
+                if (text != null && !text.isEmpty()) {
+                    tokenConsumer.accept(text);
+                    hasEmitted.set(true);
                 }
             }
-        } catch (JsonProcessingException e) {
-            log.warn("Failed to parse Claude SSE data chunk: {}", e.getMessage());
         }
+    }
+
+    /** Base URL of the OpenAI-compatible API version root (…/v1), whatever form the admin entered. */
+    private static String openAiApiRoot(String baseUrl) {
+        if (baseUrl.endsWith("/chat/completions")) {
+            return baseUrl.substring(0, baseUrl.length() - "/chat/completions".length());
+        }
+        return baseUrl.endsWith("/v1") ? baseUrl : baseUrl + "/v1";
+    }
+
+    /** Anthropic API root (without /v1/messages). */
+    private static String anthropicRoot(String baseUrl) {
+        return baseUrl.endsWith("/v1/messages")
+                ? baseUrl.substring(0, baseUrl.length() - "/v1/messages".length())
+                : baseUrl;
+    }
+
+    static boolean isOpenAiReasoningModel(String modelName) {
+        if (modelName == null) {
+            return false;
+        }
+        String model = modelName.trim().toLowerCase(Locale.ROOT);
+        return model.startsWith("gpt-5") || model.startsWith("o1") || model.startsWith("o3") || model.startsWith("o4");
     }
 }

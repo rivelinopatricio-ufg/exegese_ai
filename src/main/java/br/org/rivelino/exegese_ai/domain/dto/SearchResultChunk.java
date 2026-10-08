@@ -23,6 +23,11 @@ import java.util.UUID;
 
 /**
  * Enriched search result chunk containing document metadata and Reciprocal Rank Fusion (RRF) scoring.
+ * <p>
+ * Besides the fused rank score it carries the retrieval evidence used by the anti-hallucination guard:
+ * the cosine similarity of the vector match ({@code 1 - pgvector cosine distance}, null when the chunk was
+ * not retrieved by vector search), the lexical relevance score of the term-overlap heuristic (0 when none)
+ * and whether the chunk matched the full-text query with all its terms.
  *
  * @author Rivelino Patrício
  */
@@ -36,5 +41,8 @@ public record SearchResultChunk(
     String metadataJson,
     double score,
     int vectorRank,
-    int textRank
+    int textRank,
+    Double vectorSimilarity,
+    double lexicalScore,
+    boolean fullTextMatch
 ) {}

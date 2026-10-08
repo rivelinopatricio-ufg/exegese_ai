@@ -20,18 +20,24 @@
 package br.org.rivelino.exegese_ai.service;
 
 import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.io.IOUtils;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
-import java.io.InputStream;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * High-fidelity text extractor using Apache PDFBox 3.0.4 with page mapping.
+ * High-fidelity text extractor using Apache PDFBox 3 with page mapping.
+ * <p>
+ * Documents are parsed with a temporary-file-backed stream cache ({@link IOUtils#createTempFileOnlyStreamCache()}),
+ * so decoded streams of large PDFs do not fill the heap, and files are read from disk instead of a byte array.
+ * PDFs with more pages than {@code exegese.ingestion.max-pages} are refused before any text is extracted.
  *
  * @author Rivelino Patrício
  */
@@ -40,19 +46,52 @@ public class PdfTextExtractor {
 
     public record ExtractedPdf(int totalPages, Map<Integer, String> pages, String fullText) {}
 
-    public ExtractedPdf extract(byte[] pdfBytes) throws IOException {
-        try (PDDocument document = Loader.loadPDF(pdfBytes)) {
+    private final int maxPages;
+
+    public PdfTextExtractor(@Value("${exegese.ingestion.max-pages:2000}") int maxPages) {
+        if (maxPages <= 0) {
+            throw new IllegalArgumentException("exegese.ingestion.max-pages must be positive");
+        }
+        this.maxPages = maxPages;
+    }
+
+    /**
+     * @return Maximum number of pages accepted per document
+     */
+    public int maxPages() {
+        return maxPages;
+    }
+
+    /**
+     * Extracts the text of a PDF file.
+     *
+     * @param pdfFile PDF on disk
+     * @return Text per page and the full text
+     * @throws IOException when the file is not a readable PDF
+     * @throws DocumentRejectedException when the PDF has more than {@link #maxPages()} pages
+     */
+    public ExtractedPdf extract(Path pdfFile) throws IOException {
+        try (PDDocument document = Loader.loadPDF(pdfFile.toFile(), IOUtils.createTempFileOnlyStreamCache())) {
             return extractFromDocument(document);
         }
     }
 
-    public ExtractedPdf extract(InputStream inputStream) throws IOException {
-        byte[] bytes = inputStream.readAllBytes();
-        return extract(bytes);
+    /**
+     * Extracts the text of an in-memory PDF (tests and small programmatic inputs).
+     *
+     * @see #extract(Path)
+     */
+    public ExtractedPdf extract(byte[] pdfBytes) throws IOException {
+        try (PDDocument document = Loader.loadPDF(pdfBytes, "", null, null, IOUtils.createTempFileOnlyStreamCache())) {
+            return extractFromDocument(document);
+        }
     }
 
     private ExtractedPdf extractFromDocument(PDDocument document) throws IOException {
         int totalPages = document.getNumberOfPages();
+        if (totalPages > maxPages) {
+            throw DocumentRejectedException.tooManyPages(totalPages, maxPages);
+        }
         Map<Integer, String> pageMap = new LinkedHashMap<>();
         StringBuilder fullTextBuilder = new StringBuilder();
 

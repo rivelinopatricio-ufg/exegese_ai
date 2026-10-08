@@ -17,24 +17,37 @@
  *
  * This software uses third-party components, distributed accordingly to their own licenses.
  *******************************************************************************/
-package br.org.rivelino.exegese_ai.config;
+package br.org.rivelino.exegese_ai.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.stereotype.Component;
 
 /**
- * Configuration for Jackson ObjectMapper bean.
+ * On startup, marks documents left in {@code PROCESSING} by a previous run (shutdown or crash while the
+ * background ingestion was running) as {@code FAILED}, so the catalog does not show them as pending forever
+ * and the operator can upload them again.
  *
  * @author Rivelino Patrício
  */
-@Configuration
-public class JacksonConfiguration {
+@Component
+public class DocumentIngestionRecoveryRunner implements ApplicationRunner {
 
-    @Bean
-    @ConditionalOnMissingBean(ObjectMapper.class)
-    public ObjectMapper objectMapper() {
-        return new ObjectMapper();
+    private static final Logger log = LoggerFactory.getLogger(DocumentIngestionRecoveryRunner.class);
+
+    private final DocumentIngestionService ingestionService;
+
+    public DocumentIngestionRecoveryRunner(DocumentIngestionService ingestionService) {
+        this.ingestionService = ingestionService;
+    }
+
+    @Override
+    public void run(ApplicationArguments args) {
+        int interrupted = ingestionService.failInterruptedIngestions();
+        if (interrupted > 0) {
+            log.warn("{} document(s) were left in PROCESSING by a previous run and are now marked as FAILED", interrupted);
+        }
     }
 }

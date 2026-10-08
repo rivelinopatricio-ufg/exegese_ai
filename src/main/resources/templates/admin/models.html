@@ -6,28 +6,10 @@
     <title>Exegese AI — Ecossistemas de Modelos de IA</title>
     <link rel="icon" type="image/png" th:href="@{/images/logo.png}">
     <link rel="stylesheet" th:href="@{/css/app.css}">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        navy: { 900: '#0b1120', 950: '#070b14' }
-                    }
-                }
-            }
-        };
-
-        (function() {
-            const saved = localStorage.getItem('exegese_theme');
-            if (saved === 'light') {
-                document.documentElement.classList.remove('dark');
-            } else {
-                document.documentElement.classList.add('dark');
-            }
-        })();
-    </script>
+    <link rel="stylesheet" th:href="@{/css/tailwind.css}">
+    <!-- Applies the saved theme before the first paint (external file: CSP without 'unsafe-inline') -->
+    <script th:src="@{/js/theme-init.js}"></script>
+    <script th:src="@{/js/common.js}" defer></script>
 </head>
 <body class="bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-slate-100 min-h-screen p-4 md:p-8 transition-colors">
 
@@ -80,7 +62,7 @@
             </nav>
 
             <!-- Theme Toggle -->
-            <button onclick="toggleTheme()" class="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs transition shadow-sm" title="Alternar tema">
+            <button type="button" data-action="toggle-theme" class="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs transition shadow-sm" title="Alternar tema">
                 🌓
             </button>
 
@@ -100,9 +82,13 @@
         <span>ℹ</span>
         <span>Provedor padrão do sistema alterado com sucesso!</span>
     </div>
+    <div th:if="${errorMessage}" class="mb-6 p-4 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 rounded-xl text-xs font-medium flex items-center gap-2 shadow-sm">
+        <span>⚠</span>
+        <span th:text="${errorMessage}">Erro</span>
+    </div>
     <div th:if="${pingResult}" class="mb-6 p-4 bg-indigo-50 dark:bg-indigo-950/80 border border-indigo-300 dark:border-indigo-800 text-indigo-800 dark:text-indigo-300 rounded-xl text-xs font-medium flex items-center gap-2 shadow-sm">
         <span>⚡</span>
-        <div><span class="font-bold">Resultado do Teste:</span> <span th:text="${pingResult}"></span></div>
+        <div><span class="font-bold" th:text="#{admin.model.ping.title}">Resultado do Teste:</span> <span th:text="${pingResult}"></span></div>
     </div>
 
     <!-- Section Title -->
@@ -189,11 +175,5 @@
         </div>
     </div>
 
-    <script>
-        function toggleTheme() {
-            const isDark = document.documentElement.classList.toggle('dark');
-            localStorage.setItem('exegese_theme', isDark ? 'dark' : 'light');
-        }
-    </script>
 </body>
 </html>

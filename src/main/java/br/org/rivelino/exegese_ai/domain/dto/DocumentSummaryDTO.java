@@ -26,7 +26,8 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Data transfer record summarizing an ingested document with associated subject tags.
+ * Data transfer record summarizing an ingested document with associated subject tags. The error message is
+ * the generic text stored when ingestion failed (never an exception or SQL detail).
  *
  * @author Rivelino Patrício
  */
@@ -39,6 +40,7 @@ public record DocumentSummaryDTO(
     Integer totalPages,
     SegmentationStrategyType segmentationStrategy,
     String status,
+    String errorMessage,
     List<String> subjectNames,
     Instant createdAt
 ) {}

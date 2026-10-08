@@ -26,32 +26,47 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.core.env.Environment;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Integration test verifying loading and overriding of custom configuration
  * properties from external app_config file.
+ * <p>
+ * The external file is only read while the Spring environment is being prepared, so this class must
+ * never reuse a cached application context created by another test class before {@code ./app_config}
+ * existed. The dedicated in-memory datasource URL below makes the context cache key unique (and keeps
+ * this context's H2 schema isolated from the shared one), guaranteeing that a fresh context is started
+ * after {@link #setUpAppConfg()} has written the file; {@link DirtiesContext} closes it afterwards so the
+ * overridden settings never leak into other test classes.
  *
  * @author Rivelino Patrício
  */
-@SpringBootTest
+@SpringBootTest(properties = "spring.datasource.url=jdbc:h2:mem:exegese_app_config_test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE")
 @ActiveProfiles("test")
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class AppConfigIntegrationTest {
 
     private static final Path APP_CONFIG_PATH = Path.of("app_config");
+    private static final Path APP_CONFIG_BACKUP_PATH = Path.of("app_config.test-backup");
 
     @Autowired
     private Environment environment;
 
     @BeforeAll
     static void setUpAppConfg() throws IOException {
+        // Preserve a developer's real ./app_config (if any) instead of overwriting and deleting it
+        if (Files.exists(APP_CONFIG_PATH)) {
+            Files.move(APP_CONFIG_PATH, APP_CONFIG_BACKUP_PATH, StandardCopyOption.REPLACE_EXISTING);
+        }
         String content = "exegese.custom.property=custom-value-loaded-from-app-confg\n"
                 + "spring.datasource.hikari.maximum-pool-size=42\n";
         Files.writeString(APP_CONFIG_PATH, content, StandardCharsets.UTF_8);
@@ -60,6 +75,9 @@ class AppConfigIntegrationTest {
     @AfterAll
     static void tearDownAppConfg() throws IOException {
         Files.deleteIfExists(APP_CONFIG_PATH);
+        if (Files.exists(APP_CONFIG_BACKUP_PATH)) {
+            Files.move(APP_CONFIG_BACKUP_PATH, APP_CONFIG_PATH);
+        }
     }
 
     @Test

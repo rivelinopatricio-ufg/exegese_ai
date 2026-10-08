@@ -1,0 +1,49 @@
+# Dependabot configuration: weekly dependency and base-image update PRs.
+# Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+version: 2
+updates:
+  # Maven dependencies, BOMs and plugins (pom.xml)
+  - package-ecosystem: "maven"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      spring:
+        patterns:
+          - "org.springframework*"
+
+  # Tailwind CSS CLI used to build src/main/resources/static/css/tailwind.css
+  # (after merging an update, run "npm ci && npm run build:css" in src/main/frontend and commit the CSS)
+  - package-ecosystem: "npm"
+    directory: "/src/main/frontend"
+    schedule:
+      interval: "weekly"
+    ignore:
+      # Tailwind v4 replaces tailwind.config.js and the @tailwind directives; migrate deliberately
+      - dependency-name: "tailwindcss"
+        update-types: ["version-update:semver-major"]
+
+  # Application image (Dockerfile at the repository root)
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # SWAG / NGINX reverse proxy image
+  - package-ecosystem: "docker"
+    directory: "/docker/proxy"
+    schedule:
+      interval: "weekly"
+
+  # PostgreSQL + pgvector image
+  - package-ecosystem: "docker"
+    directory: "/docker/postgres"
+    schedule:
+      interval: "weekly"
+
+  # GitHub Actions workflows (.github/workflows)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

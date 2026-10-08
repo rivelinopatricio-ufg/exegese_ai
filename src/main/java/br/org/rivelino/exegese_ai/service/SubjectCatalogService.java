@@ -107,6 +107,7 @@ public class SubjectCatalogService {
             doc.getTotalPages(),
             doc.getSegmentationStrategy(),
             doc.getStatus(),
+            doc.getErrorMessage(),
             doc.getSubjects().stream().map(ExegeseSubject::getName).collect(Collectors.toList()),
             doc.getCreatedAt()
         )).collect(Collectors.toList());
