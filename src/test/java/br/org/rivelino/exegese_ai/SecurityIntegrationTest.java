@@ -25,6 +25,7 @@ import br.org.rivelino.exegese_ai.repository.ExegeseSubjectRepository;
 import br.org.rivelino.exegese_ai.repository.ExegeseUserRepository;
 import br.org.rivelino.exegese_ai.repository.UserSubjectPermissionRepository;
 import br.org.rivelino.exegese_ai.security.UserAccountStatusCache;
+import br.org.rivelino.exegese_ai.service.GoogleIdentityMismatchException;
 import br.org.rivelino.exegese_ai.service.UserService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -37,6 +38,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -112,10 +114,10 @@ class SecurityIntegrationTest {
     void testBootstrapInitialAdmin() {
         demoteEveryAdmin();
 
-        ExegeseUser adminUser = userService.syncGoogleUser(INITIAL_ADMIN, "Primeiro Administrador", "https://avatar.url");
+        ExegeseUser adminUser = userService.syncGoogleUser(INITIAL_ADMIN, "Primeiro Administrador", "https://avatar.url", "sub-" + INITIAL_ADMIN);
         assertThat(adminUser.getRole()).isEqualTo(UserRole.ROLE_ADMIN);
 
-        ExegeseUser standardUser = userService.syncGoogleUser("outro@exegese.ai", "Outro Usuário", null);
+        ExegeseUser standardUser = userService.syncGoogleUser("outro@exegese.ai", "Outro Usuário", null, "sub-outro@exegese.ai");
         assertThat(standardUser.getRole()).isEqualTo(UserRole.ROLE_USER);
     }
 
@@ -125,13 +127,13 @@ class SecurityIntegrationTest {
         demoteEveryAdmin();
         userRepository.save(new ExegeseUser("current.admin@exegese.test", "Admin Atual", UserRole.ROLE_ADMIN));
 
-        ExegeseUser newcomer = userService.syncGoogleUser(INITIAL_ADMIN, "Admin Inicial", null);
+        ExegeseUser newcomer = userService.syncGoogleUser(INITIAL_ADMIN, "Admin Inicial", null, "sub-" + INITIAL_ADMIN);
         assertThat(newcomer.getRole()).isEqualTo(UserRole.ROLE_USER);
 
         // An initial admin demoted later is not promoted back on the next login
         newcomer.setRole(UserRole.ROLE_OPERATOR);
         userRepository.save(newcomer);
-        ExegeseUser again = userService.syncGoogleUser(INITIAL_ADMIN, "Admin Inicial", null);
+        ExegeseUser again = userService.syncGoogleUser(INITIAL_ADMIN, "Admin Inicial", null, "sub-" + INITIAL_ADMIN);
         assertThat(again.getRole()).isEqualTo(UserRole.ROLE_OPERATOR);
     }
 
@@ -143,9 +145,47 @@ class SecurityIntegrationTest {
                 accountStatusCache, "");
 
         assertThat(withoutInitialAdmin.isInitialAdmin("admin@exegese.ai")).isFalse();
-        ExegeseUser legacyDefault = withoutInitialAdmin.syncGoogleUser("admin@exegese.ai", "Antigo Padrão", null);
+        ExegeseUser legacyDefault = withoutInitialAdmin.syncGoogleUser("admin@exegese.ai", "Antigo Padrão", null, "sub-admin@exegese.ai");
         assertThat(legacyDefault.getRole()).isEqualTo(UserRole.ROLE_USER);
         assertThat(userService.isInitialAdmin("admin@exegese.ai")).isFalse();
+    }
+
+    @Test
+    @DisplayName("Google subject is bound on first login; a reassigned e-mail asserted by another subject never takes over the account")
+    void testGoogleSubjectBinding() {
+        demoteEveryAdmin();
+        // Account created before subjects were stored (unbound): the next login binds it
+        ExegeseUser legacy = userRepository.save(new ExegeseUser("alice.legacy@exegese.test", "Alice", UserRole.ROLE_USER));
+        ExegeseUser bound = userService.syncGoogleUser("alice.legacy@exegese.test", "Alice", null, "sub-alice-original");
+        assertThat(bound.getId()).isEqualTo(legacy.getId());
+        assertThat(bound.getGoogleSub()).isEqualTo("sub-alice-original");
+
+        // Same e-mail, another Google account (address kept by a consumer account or reassigned): refused
+        assertThatThrownBy(() -> userService.syncGoogleUser("alice.legacy@exegese.test", "Intruso", null, "sub-intruder"))
+                .isInstanceOf(GoogleIdentityMismatchException.class);
+        assertThat(userRepository.findById(legacy.getId()).orElseThrow().getName()).isEqualTo("Alice");
+
+        // The bootstrap administrator address claimed by a foreign subject is refused before any promotion
+        userRepository.save(boundUser(INITIAL_ADMIN, "sub-initial-admin"));
+        assertThatThrownBy(() -> userService.syncGoogleUser(INITIAL_ADMIN, "Impostor", null, "sub-impostor"))
+                .isInstanceOf(GoogleIdentityMismatchException.class);
+        assertThat(userRepository.existsByRole(UserRole.ROLE_ADMIN)).isFalse();
+
+        // A known subject whose Google e-mail changed keeps its account
+        ExegeseUser renamed = userService.syncGoogleUser("alice.nova@exegese.test", "Alice", null, "sub-alice-original");
+        assertThat(renamed.getId()).isEqualTo(legacy.getId());
+        assertThat(renamed.getEmail()).isEqualTo("alice.nova@exegese.test");
+
+        // ...but never by taking the e-mail of another local account
+        userRepository.save(boundUser("bruno@exegese.test", "sub-bruno"));
+        assertThatThrownBy(() -> userService.syncGoogleUser("bruno@exegese.test", "Alice", null, "sub-alice-original"))
+                .isInstanceOf(GoogleIdentityMismatchException.class);
+    }
+
+    private static ExegeseUser boundUser(String email, String googleSub) {
+        ExegeseUser user = new ExegeseUser(email, email, UserRole.ROLE_USER);
+        user.setGoogleSub(googleSub);
+        return user;
     }
 
     private void demoteEveryAdmin() {

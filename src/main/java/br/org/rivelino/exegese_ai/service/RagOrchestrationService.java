@@ -223,7 +223,16 @@ public class RagOrchestrationService {
             }
 
             String fullAnswer;
-            if (llmStreamed && !streamedAnswer.isEmpty()) {
+            if (!streamedAnswer.isEmpty()) {
+                if (!llmStreamed) {
+                    // Upstream failed after tokens were already delivered: never splice the fallback onto a
+                    // partial answer, and store nothing that differs from what the user saw
+                    String reference = ErrorReference.newReference();
+                    log.warn("LLM stream failed mid-answer [ref={}, session={}]; partial answer discarded",
+                            reference, sessionId);
+                    emitFailure(emitter, effectiveLocale, reference);
+                    return;
+                }
                 fullAnswer = streamedAnswer.toString();
             } else {
                 // Fallback: structured multi-chunk document synthesis

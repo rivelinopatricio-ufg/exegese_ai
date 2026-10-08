@@ -19,6 +19,7 @@
  *******************************************************************************/
 package br.org.rivelino.exegese_ai;
 
+import br.org.rivelino.exegese_ai.controller.ChatApiController;
 import br.org.rivelino.exegese_ai.domain.entity.ChatMessage;
 import br.org.rivelino.exegese_ai.domain.entity.ChatSession;
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseChunk;
@@ -293,6 +294,43 @@ class ChatStreamingIntegrationTest {
         assertThat(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId()))
                 .extracting(ChatMessage::getRole)
                 .containsExactly("USER");
+    }
+
+    @Test
+    @DisplayName("A question filtered by more than 50 subjects (every box checked on a large catalog) is accepted; only abusive lists are refused")
+    void testLargeSubjectSelectionAccepted() throws Exception {
+        ExegeseUser user = createUser("muitos.assuntos@exegese.test");
+        ChatSession session = createSession(user);
+        ExegeseSubject subject = createGroundedSubject("muitos");
+
+        var manySubjects = post("/api/chat/messages")
+                .with(as(user))
+                .with(csrf())
+                .param("sessionId", session.getId().toString())
+                .param("question", "Aposentadoria isenta moléstia muitos")
+                .param("subjectIds", subject.getId().toString());
+        for (int i = 0; i < 60; i++) {
+            manySubjects.param("subjectIds", UUID.randomUUID().toString());
+        }
+        String json = mockMvc.perform(manySubjects)
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        MvcResult result = mockMvc.perform(get(JsonPath.<String>read(json, "$.streamUrl")).with(as(user)))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+        result.getAsyncResult(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+        awaitStreamsFinished(user);
+
+        var abusive = post("/api/chat/messages")
+                .with(as(user))
+                .with(csrf())
+                .param("sessionId", session.getId().toString())
+                .param("question", "Aposentadoria isenta moléstia muitos");
+        for (int i = 0; i <= ChatApiController.MAX_SUBJECT_FILTERS; i++) {
+            abusive.param("subjectIds", UUID.randomUUID().toString());
+        }
+        mockMvc.perform(abusive).andExpect(status().isBadRequest());
+        assertThat(concurrencyLimiter.inFlight(user.getId())).isZero();
     }
 
     private void streamToCompletion(ExegeseUser user, ChatSession session, ExegeseSubject subject, String lang) throws Exception {

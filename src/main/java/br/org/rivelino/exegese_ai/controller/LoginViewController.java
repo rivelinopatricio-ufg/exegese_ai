@@ -41,7 +41,8 @@ public class LoginViewController {
     private static final Map<String, String> ERROR_MESSAGE_KEYS = Map.of(
             "account_disabled", "login.alert.account_disabled",
             "email_not_verified", "login.alert.email_not_verified",
-            "email_domain_not_allowed", "login.alert.email_domain_not_allowed"
+            "email_domain_not_allowed", "login.alert.email_domain_not_allowed",
+            "account_identity_mismatch", "login.alert.account_identity_mismatch"
     );
 
     @GetMapping("/login")

@@ -193,6 +193,10 @@ class HybridSearchIntegrationTest {
         ExegeseSubject active = subjectRepository.save(
                 new ExegeseSubject("visivel-ativo", "Assunto Ativo", "Ativo")
         );
+        // A second active subject, so that filtering by the first one really narrows the search
+        ExegeseSubject otherActive = subjectRepository.save(
+                new ExegeseSubject("visivel-outro", "Outro Assunto Ativo", "Ativo")
+        );
         ExegeseSubject inactive = new ExegeseSubject("oculto-inativo", "Assunto Inativo", "Inativo");
         inactive.setActive(false);
         inactive = subjectRepository.save(inactive);
@@ -201,6 +205,7 @@ class HybridSearchIntegrationTest {
         ExegeseDocument onlyInactive = saveDocumentWithChunk("Doc Inativo", "hash-vis-inativo", List.of(inactive));
         ExegeseDocument withoutSubject = saveDocumentWithChunk("Doc Sem Assunto", "hash-vis-nenhum", List.of());
         ExegeseDocument mixed = saveDocumentWithChunk("Doc Misto", "hash-vis-misto", List.of(active, inactive));
+        ExegeseDocument onlyOther = saveDocumentWithChunk("Doc Outro", "hash-vis-outro", List.of(otherActive));
         entityManager.flush();
 
         // No filter: documents with an active subject or without any subject
@@ -208,6 +213,12 @@ class HybridSearchIntegrationTest {
                 .contains(onlyActive.getId(), withoutSubject.getId(), mixed.getId())
                 .doesNotContain(onlyInactive.getId());
         assertThat(documentIds(hybridSearchService.search("Zirconiofilia", null, 10)))
+                .doesNotContain(onlyInactive.getId());
+
+        // Every active subject selected (the chat page default) narrows nothing: untagged documents stay visible
+        List<java.util.UUID> allActive = subjectRepository.findByActiveTrue().stream().map(ExegeseSubject::getId).toList();
+        assertThat(documentIds(hybridSearchService.search("Zirconiofilia", allActive, 10)))
+                .contains(onlyActive.getId(), withoutSubject.getId(), mixed.getId(), onlyOther.getId())
                 .doesNotContain(onlyInactive.getId());
 
         // Active subject filter: only documents tagged with it

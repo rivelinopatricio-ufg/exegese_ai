@@ -85,6 +85,8 @@ class AccountStatusSupportTest {
         assertThat(redirectFor(handler, new OAuth2AuthenticationException(
                 new OAuth2Error(CustomOidcUserService.ERROR_EMAIL_DOMAIN_NOT_ALLOWED)))).isEqualTo("/login?error=email_domain_not_allowed");
         assertThat(redirectFor(handler, new OAuth2AuthenticationException(
+                new OAuth2Error(CustomOidcUserService.ERROR_ACCOUNT_IDENTITY_MISMATCH)))).isEqualTo("/login?error=account_identity_mismatch");
+        assertThat(redirectFor(handler, new OAuth2AuthenticationException(
                 new OAuth2Error("invalid_token_response")))).isEqualTo("/login?error");
         assertThat(redirectFor(handler, new BadCredentialsException("bad"))).isEqualTo("/login?error");
     }

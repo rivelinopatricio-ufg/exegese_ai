@@ -201,10 +201,12 @@ O `ollama_init.sh` aguarda o servidor e baixa `OLLAMA_CHAT_MODEL` (padrão `llam
   (o Dependabot propõe atualizações semanais dos Dockerfiles).
 - **Aplicação**: imagem em camadas do Spring Boot (dependências separadas do código), usuário não-root `10001`, `ENTRYPOINT` sem shell
   e opções da JVM em `JAVA_TOOL_OPTIONS` (ZGC, `-XX:MaxRAMPercentage=75`, `-XX:+ExitOnOutOfMemoryError`). No compose: `read_only: true`
-  com tmpfs em `/tmp` (256 MB), `cap_drop: [ALL]`, `no-new-privileges`, `mem_limit` (`APP_MEM_LIMIT`, padrão 2g), `cpus` (`APP_CPUS`,
-  padrão 2) e `pids_limit`. Só os volumes `upload_data` (`/app/uploads`) e `storage_data` (`/app/storage`) são graváveis.
+  com tmpfs em `/tmp` (256 MB), `cap_drop: [ALL]`, `no-new-privileges`, `mem_limit` (`APP_MEM_LIMIT`, padrão 2g), `cpus` (`APP_CPUS`:
+  o `install.sh` grava o número de CPUs do host limitado a 2; vazio ou `0` = sem limite) e `pids_limit`. Só os volumes `upload_data` (`/app/uploads`) e `storage_data` (`/app/storage`) são graváveis.
 - **Proxy**: `cap_add: NET_ADMIN` existe apenas para o **fail2ban** do SWAG (bloqueio por iptables); remova-o se não usar o fail2ban.
-  A configuração do site (`docker/proxy/config/default`) é montada como `/config/nginx/site-confs/default.conf` (o SWAG só carrega `*.conf`).
+  A configuração do site é montada como `/config/nginx/site-confs/default.conf` (o SWAG só carrega `*.conf`): o `install.sh` gera
+  `docker/proxy/config/site.conf` (não versionado) com as portas configuradas e grava `PROXY_SITE_CONFIG=site.conf` no `.env`; sem essa
+  variável, é montado o modelo versionado `docker/proxy/config/default` (portas 80/443). O instalador nunca altera o arquivo versionado.
 - **Keystore de desenvolvimento**: `src/main/resources/cert.p12` é só para rodar no Eclipse; fica fora do JAR (`maven-jar-plugin`) e do
   contexto Docker (`.dockerignore`). Em produção o TLS termina no SWAG.
 
@@ -216,7 +218,13 @@ Instalações feitas antes desta versão usavam uma chave AES fixa no código, u
    Cerebras, NVIDIA, DeepSeek) e um novo *client secret* do Google OAuth2 no Google Cloud Console. Revogue as antigas.
 2. **Feche as portas 5432 e 11434** no firewall do host e no *security group* / lista de segurança da nuvem. O novo `docker-compose.yml`
    já não as publica, mas a regra de nuvem antiga deve ser removida. Confira com `sudo ss -tlnp` e um `nmap` externo: só 80/443.
-3. **Atualize o código e reaproveite o `.env`**: `git pull` e `./install.sh`. Mantendo o `.env` atual ou reconfigurando-o, o instalador **preserva**
+3. **Atualize o código e reaproveite o `.env`**:
+   ```bash
+   git checkout -- docker/proxy/config/default && git pull && ./install.sh
+   ```
+   O `git checkout` descarta apenas a cópia de `docker/proxy/config/default` que o instalador antigo reescrevia a cada execução (sem ele,
+   o `git pull` aborta com *"Your local changes ... would be overwritten"*); o novo `install.sh` gera o site em
+   `docker/proxy/config/site.conf`, fora do controle de versão, com as portas configuradas. Mantendo o `.env` atual ou reconfigurando-o, o instalador **preserva**
    `POSTGRES_USER`, `POSTGRES_PASSWORD` e `EXEGESE_AES_SECRET` já gravados (o volume `pgdata` não aceita novas credenciais),
    completa o que faltar e exige `INITIAL_ADMIN_EMAIL` (o antigo padrão `admin@exegese.ai` é recusado).
 4. **Defina `EXEGESE_AES_SECRET`** (Base64 de 32 bytes: `openssl rand -base64 32`) se o `.env` ainda não tiver um valor válido. A aplicação
@@ -406,6 +414,7 @@ O workflow `.github/workflows/ci.yml` roda em todo push e pull request, com `per
 | `EXEGESE_AES_SECRET` | *(gerada: `openssl rand -base64 32`)* | Chave mestra AES-256-GCM das chaves de API gravadas no banco: Base64 de exatamente 32 bytes. **Obrigatória** (a aplicação não sobe sem ela); mantenha-a estável e com backup. Para rodar no Eclipse/IDE, defina-a como variável de ambiente. |
 | `INITIAL_ADMIN_EMAIL` | - | **Obrigatório na instalação** (o `install.sh` exige e recusa o antigo `admin@exegese.ai`). E-mail Google promovido a Administrador no login **somente enquanto não existir nenhum `ROLE_ADMIN`** e só com `email_verified=true`. Sem valor padrão: se ficar vazio, a aplicação registra um aviso e ninguém é promovido automaticamente. |
 | `ALLOWED_EMAIL_DOMAINS` | - | Domínios de e-mail Google autorizados a entrar (`exegese.security.allowed-email-domains`), separados por vírgula. Vazio = qualquer conta Google com e-mail verificado. Contas desativadas e e-mails não verificados são sempre recusados. |
+| `REQUIRE_HOSTED_DOMAIN` | `true` | Com `ALLOWED_EMAIL_DOMAINS` definido, exige que a conta Google seja gerenciada pelo próprio domínio no Google Workspace (claim `hd` igual ao domínio do e-mail), recusando contas Google pessoais que mantêm um endereço verificado da organização (`exegese.security.require-hosted-domain`). Use `false` apenas se o e-mail do domínio não estiver no Google Workspace. Independentemente disso, cada conta local fica vinculada ao identificador Google (`sub`) no primeiro login: outro `sub` com o mesmo e-mail é recusado (`account_identity_mismatch`). |
 | `GOOGLE_CLIENT_ID` | - | Client ID OAuth2 configurado no Google Cloud Console. |
 | `GOOGLE_CLIENT_SECRET` | - | Client Secret OAuth2 do Google Cloud Console. |
 | `GEMINI_API_KEY` | - | Chave de API para o Google Gemini: chat e embeddings semânticos (`gemini-embedding-001`, 768 dimensões). Sem ela, a busca usa apenas texto completo e a ingestão de documentos falha. Após configurá-la, use **Reindexar embeddings** em `/admin/documents` para gerar os vetores dos documentos já indexados. |
@@ -419,10 +428,12 @@ O workflow `.github/workflows/ci.yml` roda em todo push e pull request, com `per
 | `OLLAMA_CHAT_MODEL` | `llama3.2` | Modelo de chat baixado pelo `ollama_init.sh` e usado como padrão do provedor Ollama Local. |
 | `SPRING_PROFILES_ACTIVE` | `prod` (Docker) | Perfil Spring. No Docker é sempre `prod`; em desenvolvimento use `dev` (ver seção 6.2). |
 | `APP_MEM_LIMIT` | `2g` | Limite de memória do contêiner `app` (`mem_limit`). O heap da JVM usa 75% dele (`-XX:MaxRAMPercentage=75`) e o tmpfs `/tmp` (256 MB) também conta nesse limite. |
-| `APP_CPUS` | `2` | Limite de CPUs do contêiner `app`. |
+| `APP_CPUS` | *(sem limite; o `install.sh` grava o nº de CPUs do host, no máximo 2)* | Limite de CPUs do contêiner `app` (`cpus`). Nunca acima do número de CPUs do host: o Docker recusa criar o contêiner. Vazio ou `0` = sem limite. |
+| `PROXY_SITE_CONFIG` | `default` | Arquivo em `docker/proxy/config/` montado como site do SWAG. O `install.sh` grava `site.conf` (gerado com as portas configuradas, não versionado). |
 | `UPLOAD_DIR` | `./uploads` | Diretório onde os PDFs originais enviados são guardados como `<sha256>.pdf` (no Docker: volume `upload_data` em `/app/uploads`). A indexação roda em segundo plano e o catálogo mostra o status (`PROCESSING`, `INDEXED`, `FAILED`). |
 
 Propriedades de segurança relacionadas: `exegese.security.allowed-email-domains` (variável `ALLOWED_EMAIL_DOMAINS`),
+`exegese.security.require-hosted-domain` (variável `REQUIRE_HOSTED_DOMAIN`),
 `exegese.security.crypto-key` (variável `EXEGESE_AES_SECRET`) e `exegese.llm.allowed-hosts` (variável `LLM_ALLOWED_HOSTS`).
 
 ### 8.1. Arquivo de Configuração Customizada (`app_config`)

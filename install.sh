@@ -23,6 +23,12 @@ readonly DEFAULT_HTTPS_PORT=443
 readonly DEFAULT_POSTGRES_DB="exegese_db"
 readonly DEFAULT_OLLAMA_BASE_URL="http://ollama:11434"
 readonly DEFAULT_OLLAMA_CHAT_MODEL="llama3.2"
+readonly DEFAULT_APP_MEM_LIMIT="2g"
+# Upper bound of the default CPU limit of the app container (never above the host CPU count)
+readonly MAX_DEFAULT_APP_CPUS=2
+# NGINX site generated with the configured ports (untracked, see .gitignore); docker/proxy/config/default
+# is the tracked template, mounted when PROXY_SITE_CONFIG is not set
+readonly PROXY_SITE_CONFIG_FILE="site.conf"
 
 # Values used by earlier versions of this script / docker-compose.yml (public, must not be kept)
 readonly LEGACY_POSTGRES_USER="exegese_user"
@@ -47,6 +53,7 @@ GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-}"
 GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET:-}"
 INITIAL_ADMIN_EMAIL="${INITIAL_ADMIN_EMAIL:-}"
 ALLOWED_EMAIL_DOMAINS="${ALLOWED_EMAIL_DOMAINS:-}"
+REQUIRE_HOSTED_DOMAIN="${REQUIRE_HOSTED_DOMAIN:-}"
 GEMINI_API_KEY="${GEMINI_API_KEY:-}"
 OPENAI_API_KEY="${OPENAI_API_KEY:-}"
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
@@ -60,6 +67,8 @@ POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}"
 EXEGESE_AES_SECRET="${EXEGESE_AES_SECRET:-}"
 OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-}"
 OLLAMA_CHAT_MODEL="${OLLAMA_CHAT_MODEL:-}"
+APP_CPUS="${APP_CPUS:-}"
+APP_MEM_LIMIT="${APP_MEM_LIMIT:-}"
 
 log_info() {
     echo -e "${CLR_BLUE}[INFO]${CLR_RESET} $1"
@@ -119,7 +128,7 @@ print_help() {
     echo -e "${CLR_YELLOW}${CLR_BOLD}Security note:${CLR_RESET} secrets passed as command-line flags (--google-client-secret, --*-key)"
     echo "are visible to other local users in 'ps' and are saved in your shell history. Prefer environment"
     echo "variables (or the interactive prompts, which do not echo secrets):"
-    echo "  GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, INITIAL_ADMIN_EMAIL, ALLOWED_EMAIL_DOMAINS,"
+    echo "  GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, INITIAL_ADMIN_EMAIL, ALLOWED_EMAIL_DOMAINS, REQUIRE_HOSTED_DOMAIN,"
     echo "  GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, CEREBRAS_API_KEY"
     echo "Values typed inline before the command also reach the history: load them with 'read -rs VAR; export VAR'."
     echo ""
@@ -341,8 +350,26 @@ set_env_value() {
     rm -f "$tmp"
 }
 
+# Docker Compose project name of this installation (COMPOSE_PROJECT_NAME, else the normalized directory name)
+compose_project_name() {
+    local name="${COMPOSE_PROJECT_NAME:-}"
+    [[ -z "$name" ]] && name=$(read_env_value COMPOSE_PROJECT_NAME)
+    [[ -z "$name" ]] && name=$(basename "$PWD")
+    printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-'
+}
+
+# PostgreSQL data volume of THIS compose project only: a '*pgdata' volume of another project (for
+# example docker/postgres) must never make the installer reuse the legacy public credentials
 find_existing_pgdata_volumes() {
-    docker volume ls --format '{{.Name}}' 2>/dev/null | grep -E 'pgdata$' || true
+    local project
+    project=$(compose_project_name)
+    {
+        docker volume ls -q \
+            --filter "label=com.docker.compose.project=${project}" \
+            --filter "label=com.docker.compose.volume=pgdata" 2>/dev/null || true
+        # Volumes created without labels by very old Compose versions
+        docker volume inspect "${project}_pgdata" --format '{{.Name}}' 2>/dev/null || true
+    } | sed '/^$/d' | sort -u
 }
 
 warn_default_db_password() {
@@ -439,6 +466,18 @@ load_preserved_settings() {
     fi
 }
 
+# Default CPU limit of the app container: the host CPU count, capped at MAX_DEFAULT_APP_CPUS (Docker refuses
+# to create a container whose CPU limit exceeds the host CPU count)
+default_app_cpus() {
+    local cpus
+    cpus=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
+    [[ "$cpus" =~ ^[0-9]+$ && "$cpus" -ge 1 ]] || cpus=1
+    if (( cpus > MAX_DEFAULT_APP_CPUS )); then
+        cpus=$MAX_DEFAULT_APP_CPUS
+    fi
+    printf '%s' "$cpus"
+}
+
 # Completes the database credentials, AES key and Ollama settings (generating what is missing)
 resolve_generated_settings() {
     POSTGRES_DB="${POSTGRES_DB:-$DEFAULT_POSTGRES_DB}"
@@ -461,6 +500,13 @@ resolve_generated_settings() {
         OLLAMA_BASE_URL="$DEFAULT_OLLAMA_BASE_URL"
     fi
     OLLAMA_CHAT_MODEL="${OLLAMA_CHAT_MODEL:-$DEFAULT_OLLAMA_CHAT_MODEL}"
+    # Resource limits and login policy: environment, else the previous .env (reconfiguration), else defaults
+    APP_CPUS="${APP_CPUS:-$(read_env_value APP_CPUS)}"
+    APP_CPUS="${APP_CPUS:-$(default_app_cpus)}"
+    APP_MEM_LIMIT="${APP_MEM_LIMIT:-$(read_env_value APP_MEM_LIMIT)}"
+    APP_MEM_LIMIT="${APP_MEM_LIMIT:-$DEFAULT_APP_MEM_LIMIT}"
+    REQUIRE_HOSTED_DOMAIN="${REQUIRE_HOSTED_DOMAIN:-$(read_env_value REQUIRE_HOSTED_DOMAIN)}"
+    REQUIRE_HOSTED_DOMAIN="${REQUIRE_HOSTED_DOMAIN:-true}"
 }
 
 # Brings an existing .env (kept without reconfiguration) up to the current requirements
@@ -493,6 +539,16 @@ upgrade_existing_env() {
     fi
     if [[ -z "$env_ollama" || "$env_ollama" == "$LEGACY_OLLAMA_BASE_URL" ]]; then
         set_env_value OLLAMA_BASE_URL "$DEFAULT_OLLAMA_BASE_URL"
+    fi
+    if [[ -n "$APP_CPUS" ]]; then
+        set_env_value APP_CPUS "$APP_CPUS"
+    elif [[ -z "$(read_env_value APP_CPUS)" ]]; then
+        set_env_value APP_CPUS "$(default_app_cpus)"
+    fi
+    if [[ -n "$REQUIRE_HOSTED_DOMAIN" ]]; then
+        set_env_value REQUIRE_HOSTED_DOMAIN "$REQUIRE_HOSTED_DOMAIN"
+    elif [[ -z "$(read_env_value REQUIRE_HOSTED_DOMAIN)" ]]; then
+        set_env_value REQUIRE_HOSTED_DOMAIN true
     fi
     if [[ "$env_password" == "$LEGACY_POSTGRES_PASSWORD" ]]; then
         DB_PASSWORD_IS_DEFAULT=true
@@ -689,6 +745,10 @@ configure_environment() {
         read -rp "Allowed Google e-mail domains, comma-separated (empty = any verified Google account)${previous_domains:+ [${previous_domains}]}: " input_domains
         ALLOWED_EMAIL_DOMAINS=${input_domains:-$previous_domains}
     fi
+    if [[ -n "$ALLOWED_EMAIL_DOMAINS" ]]; then
+        log_info "Only Google accounts managed by these Google Workspace domains will sign in (hd claim). If a domain's"
+        log_info "mail is not hosted on Google Workspace, set REQUIRE_HOSTED_DOMAIN=false in .env (e-mail match only)."
+    fi
 
     # Calculate Redirect URI for Google Cloud Console
     local proto="https"
@@ -770,6 +830,9 @@ EXEGESE_AES_SECRET=${EXEGESE_AES_SECRET}
 INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL}
 # Google e-mail domains allowed to sign in (comma-separated; empty = any verified Google account)
 ALLOWED_EMAIL_DOMAINS=${ALLOWED_EMAIL_DOMAINS}
+# With ALLOWED_EMAIL_DOMAINS: require accounts managed by that Google Workspace domain (hd claim).
+# Set to false only when the domain's mail is not hosted on Google Workspace.
+REQUIRE_HOSTED_DOMAIN=${REQUIRE_HOSTED_DOMAIN}
 
 # ==============================================================================
 # Google OAuth2 / OIDC Authentication
@@ -792,6 +855,13 @@ DEEPSEEK_API_KEY=
 # Optional local Ollama (docker-compose.override.ai*.yml), reached on the internal network
 OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
 OLLAMA_CHAT_MODEL=${OLLAMA_CHAT_MODEL}
+
+# Resource limits of the app container. APP_CPUS must not exceed the host CPU count (0 = no CPU limit)
+APP_CPUS=${APP_CPUS}
+APP_MEM_LIMIT=${APP_MEM_LIMIT}
+
+# NGINX site generated by install.sh with the configured ports (docker/proxy/config/<file>, untracked)
+PROXY_SITE_CONFIG=${PROXY_SITE_CONFIG_FILE}
 EOF
 
     chmod 600 .env
@@ -811,8 +881,10 @@ configure_nginx_proxy() {
         forwarded_port="${target_https_port}"
     fi
 
+    # Written to an untracked file: the tracked template docker/proxy/config/default is never modified, so
+    # 'git pull' keeps working on installations with custom ports
     mkdir -p docker/proxy/config
-    cat > docker/proxy/config/default << EOF
+    cat > "docker/proxy/config/${PROXY_SITE_CONFIG_FILE}" << EOF
 # ==============================================================================
 # Exegese AI - NGINX Site Configuration (SWAG / LinuxServer.io)
 # Mounted by docker-compose.yml as /config/nginx/site-confs/default.conf (SWAG only loads *.conf).
@@ -893,6 +965,9 @@ server {
 # enable subdomain method reverse proxy confs
 include /config/nginx/proxy-confs/*.subdomain.conf;
 EOF
+    if [[ -f .env && "$(read_env_value PROXY_SITE_CONFIG)" != "$PROXY_SITE_CONFIG_FILE" ]]; then
+        set_env_value PROXY_SITE_CONFIG "$PROXY_SITE_CONFIG_FILE"
+    fi
     log_success "NGINX configuration dynamically generated for HTTP port ${target_http_port} and HTTPS port ${target_https_port}."
 }
 

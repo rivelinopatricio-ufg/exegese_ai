@@ -31,13 +31,20 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+
+import jakarta.annotation.PreDestroy;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -52,6 +59,11 @@ import br.org.rivelino.exegese_ai.domain.enums.ModelProvider;
  * Every outbound call first resolves the provider base URL through {@link LlmEndpointPolicy}: a URL that
  * is not https or whose host is outside the provider allowlist is refused before the API key leaves the
  * application. HTTP redirects are never followed.
+ * <p>
+ * The HTTP request timeout only bounds the wait for the response headers, so reading a streamed body is
+ * guarded separately: a watchdog interrupts the reading thread when no line arrives for
+ * {@link #BODY_IDLE_TIMEOUT} or the body is still open after {@link #BODY_DEADLINE} (below the SSE emitter
+ * timeout), so a stalled upstream can never pin the chat worker and its concurrency permit.
  *
  * @author Rivelino Patrício
  */
@@ -63,16 +75,40 @@ public class LlmClientService {
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(15);
     private static final Duration STREAM_TIMEOUT = Duration.ofSeconds(60);
     private static final Duration PING_TIMEOUT = Duration.ofSeconds(10);
+    /** Longest silence accepted between two lines of a streamed response body. */
+    static final Duration BODY_IDLE_TIMEOUT = Duration.ofSeconds(60);
+    /** Upper bound for reading a whole streamed response body (below ChatStreamService.STREAM_TIMEOUT_MS). */
+    static final Duration BODY_DEADLINE = Duration.ofSeconds(170);
+    private static final Duration WATCHDOG_TICK = Duration.ofSeconds(5);
     private static final String ANTHROPIC_VERSION = "2023-06-01";
 
     private final JsonMapper objectMapper;
     private final LlmEndpointPolicy endpointPolicy;
     private final HttpClient httpClient;
     private final HttpClient pingHttpClient;
+    private final Duration bodyIdleTimeout;
+    private final Duration bodyDeadline;
+    private final Duration watchdogTick;
+    private final ScheduledThreadPoolExecutor watchdog;
 
+    @Autowired
     public LlmClientService(JsonMapper objectMapper, LlmEndpointPolicy endpointPolicy) {
+        this(objectMapper, endpointPolicy, BODY_IDLE_TIMEOUT, BODY_DEADLINE, WATCHDOG_TICK);
+    }
+
+    LlmClientService(JsonMapper objectMapper, LlmEndpointPolicy endpointPolicy,
+                     Duration bodyIdleTimeout, Duration bodyDeadline, Duration watchdogTick) {
         this.objectMapper = objectMapper;
         this.endpointPolicy = endpointPolicy;
+        this.bodyIdleTimeout = bodyIdleTimeout;
+        this.bodyDeadline = bodyDeadline;
+        this.watchdogTick = watchdogTick;
+        this.watchdog = new ScheduledThreadPoolExecutor(1, runnable -> {
+            Thread thread = new Thread(runnable, "llm-stream-watchdog");
+            thread.setDaemon(true);
+            return thread;
+        });
+        this.watchdog.setRemoveOnCancelPolicy(true);
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(CONNECT_TIMEOUT)
                 .followRedirects(HttpClient.Redirect.NEVER)
@@ -201,6 +237,50 @@ public class LlmClientService {
         }
     }
 
+    @PreDestroy
+    void shutdownWatchdog() {
+        watchdog.shutdownNow();
+    }
+
+    /**
+     * Reads a streamed response body line by line under the idle/deadline watchdog. When the upstream stalls
+     * the reading thread is interrupted, which makes the blocked read fail with an
+     * {@link java.io.UncheckedIOException} (handled by {@link #streamInference} as a failed stream).
+     */
+    private void consumeLines(Stream<String> lines, Consumer<String> onLine) {
+        Thread reader = Thread.currentThread();
+        long started = System.nanoTime();
+        AtomicLong lastLine = new AtomicLong(started);
+        AtomicBoolean expired = new AtomicBoolean(false);
+        long tickMillis = Math.max(1, watchdogTick.toMillis());
+        ScheduledFuture<?> guard = watchdog.scheduleAtFixedRate(() -> {
+            long now = System.nanoTime();
+            if (now - lastLine.get() > bodyIdleTimeout.toNanos() || now - started > bodyDeadline.toNanos()) {
+                if (expired.compareAndSet(false, true)) {
+                    reader.interrupt();
+                }
+            }
+        }, tickMillis, tickMillis, TimeUnit.MILLISECONDS);
+        try (lines) {
+            lines.forEach(line -> {
+                lastLine.set(System.nanoTime());
+                onLine.accept(line);
+            });
+        } catch (RuntimeException e) {
+            if (expired.get()) {
+                log.warn("LLM response body stalled (no data for {} s or open for more than {} s); stream aborted",
+                        bodyIdleTimeout.toSeconds(), bodyDeadline.toSeconds());
+            }
+            throw e;
+        } finally {
+            guard.cancel(false);
+            if (expired.get()) {
+                // Clear the watchdog interrupt so that the work that follows (persistence, SSE) is not affected
+                Thread.interrupted();
+            }
+        }
+    }
+
     private boolean streamGemini(AiModelConfig config,
                                  String baseUrl,
                                  String apiKey,
@@ -250,16 +330,14 @@ public class LlmClientService {
             return false;
         }
 
-        try (Stream<String> lines = response.body()) {
-            lines.forEach(line -> {
-                if (line.startsWith("data: ")) {
-                    String data = line.substring(6).trim();
-                    if (!data.isEmpty()) {
-                        parseGeminiDataChunk(data, tokenConsumer, hasEmitted);
-                    }
+        consumeLines(response.body(), line -> {
+            if (line.startsWith("data: ")) {
+                String data = line.substring(6).trim();
+                if (!data.isEmpty()) {
+                    parseGeminiDataChunk(data, tokenConsumer, hasEmitted);
                 }
-            });
-        }
+            }
+        });
 
         return hasEmitted.get();
     }
@@ -343,16 +421,14 @@ public class LlmClientService {
             return false;
         }
 
-        try (Stream<String> lines = response.body()) {
-            lines.forEach(line -> {
-                if (line.startsWith("data: ")) {
-                    String data = line.substring(6).trim();
-                    if (!data.isEmpty() && !"[DONE]".equals(data)) {
-                        parseOpenAiDataChunk(data, tokenConsumer, hasEmitted);
-                    }
+        consumeLines(response.body(), line -> {
+            if (line.startsWith("data: ")) {
+                String data = line.substring(6).trim();
+                if (!data.isEmpty() && !"[DONE]".equals(data)) {
+                    parseOpenAiDataChunk(data, tokenConsumer, hasEmitted);
                 }
-            });
-        }
+            }
+        });
 
         return hasEmitted.get();
     }
@@ -418,16 +494,14 @@ public class LlmClientService {
             return false;
         }
 
-        try (Stream<String> lines = response.body()) {
-            lines.forEach(line -> {
-                if (line.startsWith("data: ")) {
-                    String data = line.substring(6).trim();
-                    if (!data.isEmpty()) {
-                        parseClaudeDataChunk(data, tokenConsumer, hasEmitted);
-                    }
+        consumeLines(response.body(), line -> {
+            if (line.startsWith("data: ")) {
+                String data = line.substring(6).trim();
+                if (!data.isEmpty()) {
+                    parseClaudeDataChunk(data, tokenConsumer, hasEmitted);
                 }
-            });
-        }
+            }
+        });
 
         return hasEmitted.get();
     }

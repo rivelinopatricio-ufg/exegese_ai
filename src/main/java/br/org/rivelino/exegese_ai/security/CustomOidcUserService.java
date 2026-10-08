@@ -20,6 +20,7 @@
 package br.org.rivelino.exegese_ai.security;
 
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseUser;
+import br.org.rivelino.exegese_ai.service.GoogleIdentityMismatchException;
 import br.org.rivelino.exegese_ai.service.UserService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,6 +47,11 @@ import java.util.stream.Collectors;
  * This is the single place where a Google login is accepted or rejected and where the local account
  * is synchronized: the e-mail must be verified by Google, belong to an allowed domain (when
  * {@code exegese.security.allowed-email-domains} is set) and must not belong to a deactivated account.
+ * With a domain allowlist the Google account must also be managed by that Google Workspace domain (the
+ * {@code hd} claim), unless {@code exegese.security.require-hosted-domain} is false: a consumer Google account
+ * may keep a verified address of a domain long after the mailbox was revoked. Local accounts are bound to the
+ * Google subject ({@code sub}) on the first login, and a login asserting the e-mail of an account bound to
+ * another subject is refused.
  *
  * @author Rivelino Patrício
  */
@@ -57,18 +63,31 @@ public class CustomOidcUserService extends OidcUserService {
     public static final String ERROR_ACCOUNT_DISABLED = "account_disabled";
     public static final String ERROR_EMAIL_NOT_VERIFIED = "email_not_verified";
     public static final String ERROR_EMAIL_DOMAIN_NOT_ALLOWED = "email_domain_not_allowed";
+    public static final String ERROR_ACCOUNT_IDENTITY_MISMATCH = "account_identity_mismatch";
+
+    /** Consumer Google mail domains: their accounts never carry an {@code hd} (hosted domain) claim. */
+    private static final Set<String> CONSUMER_GOOGLE_DOMAINS = Set.of("gmail.com", "googlemail.com");
 
     private final UserService userService;
     private final Set<String> allowedEmailDomains;
+    private final boolean requireHostedDomain;
 
     public CustomOidcUserService(UserService userService,
-                                 @Value("${exegese.security.allowed-email-domains:}") String allowedEmailDomains) {
+                                 @Value("${exegese.security.allowed-email-domains:}") String allowedEmailDomains,
+                                 @Value("${exegese.security.require-hosted-domain:true}") boolean requireHostedDomain) {
         this.userService = userService;
         this.allowedEmailDomains = parseDomains(allowedEmailDomains);
+        this.requireHostedDomain = requireHostedDomain;
         if (this.allowedEmailDomains.isEmpty()) {
             log.info("Google login open to any verified Google account (exegese.security.allowed-email-domains is empty)");
         } else {
-            log.info("Google login restricted to e-mail domains: {}", this.allowedEmailDomains);
+            log.info("Google login restricted to e-mail domains: {} (Google Workspace hosted domain required: {})",
+                    this.allowedEmailDomains, requireHostedDomain);
+            if (requireHostedDomain && this.allowedEmailDomains.stream().anyMatch(CONSUMER_GOOGLE_DOMAINS::contains)) {
+                log.warn("exegese.security.allowed-email-domains lists a consumer Google domain, whose accounts have no "
+                        + "hosted domain (hd) claim and are refused while exegese.security.require-hosted-domain "
+                        + "(REQUIRE_HOSTED_DOMAIN) is true");
+            }
         }
     }
 
@@ -84,7 +103,8 @@ public class CustomOidcUserService extends OidcUserService {
      * @param oidcUser OIDC user built from the Google ID token and user info
      * @return OIDC user carrying the local role as an authority
      * @throws OAuth2AuthenticationException with error code {@link #ERROR_EMAIL_NOT_VERIFIED},
-     *         {@link #ERROR_EMAIL_DOMAIN_NOT_ALLOWED} or {@link #ERROR_ACCOUNT_DISABLED} when the login is refused
+     *         {@link #ERROR_EMAIL_DOMAIN_NOT_ALLOWED}, {@link #ERROR_ACCOUNT_IDENTITY_MISMATCH} or
+     *         {@link #ERROR_ACCOUNT_DISABLED} when the login is refused
      */
     OidcUser authorizeAndSynchronize(OidcUser oidcUser) {
         String email = oidcUser.getEmail();
@@ -94,17 +114,35 @@ public class CustomOidcUserService extends OidcUserService {
         if (!isAllowedDomain(email)) {
             throw reject(ERROR_EMAIL_DOMAIN_NOT_ALLOWED, "Google account e-mail domain is not allowed");
         }
+        if (!isManagedByAllowedDomain(email, oidcUser.getClaimAsString("hd"))) {
+            throw reject(ERROR_EMAIL_DOMAIN_NOT_ALLOWED, "Google account is not managed by an allowed Workspace domain");
+        }
+        String subject = oidcUser.getSubject();
+        if (subject == null || subject.isBlank()) {
+            throw reject(ERROR_ACCOUNT_IDENTITY_MISMATCH, "Google account subject is missing");
+        }
 
-        Optional<ExegeseUser> existing = userService.findByEmail(email);
-        if (existing.isPresent() && !existing.get().isActive()) {
-            throw reject(ERROR_ACCOUNT_DISABLED, "Local account is deactivated");
+        Optional<ExegeseUser> existing = userService.findByGoogleSub(subject).or(() -> userService.findByEmail(email));
+        if (existing.isPresent()) {
+            ExegeseUser account = existing.get();
+            if (account.getGoogleSub() != null && !account.getGoogleSub().equals(subject)) {
+                throw reject(ERROR_ACCOUNT_IDENTITY_MISMATCH, "Local account is bound to another Google subject");
+            }
+            if (!account.isActive()) {
+                throw reject(ERROR_ACCOUNT_DISABLED, "Local account is deactivated");
+            }
         }
 
         String name = oidcUser.getFullName() != null ? oidcUser.getFullName() : oidcUser.getGivenName();
         if (name == null || name.isBlank()) {
             name = email;
         }
-        ExegeseUser appUser = userService.syncGoogleUser(email, name, oidcUser.getPicture());
+        ExegeseUser appUser;
+        try {
+            appUser = userService.syncGoogleUser(email, name, oidcUser.getPicture(), subject);
+        } catch (GoogleIdentityMismatchException e) {
+            throw reject(ERROR_ACCOUNT_IDENTITY_MISMATCH, e.getMessage());
+        }
         if (!appUser.isActive()) {
             throw reject(ERROR_ACCOUNT_DISABLED, "Local account is deactivated");
         }
@@ -121,6 +159,22 @@ public class CustomOidcUserService extends OidcUserService {
         }
         int at = email.lastIndexOf('@');
         return at >= 0 && allowedEmailDomains.contains(email.substring(at + 1).trim().toLowerCase(Locale.ROOT));
+    }
+
+    /**
+     * With a domain allowlist (and {@code require-hosted-domain}), the {@code hd} claim must name the e-mail
+     * domain itself, and that domain must be allowed: only then is the account managed by the domain owner.
+     */
+    private boolean isManagedByAllowedDomain(String email, String hostedDomain) {
+        if (allowedEmailDomains.isEmpty() || !requireHostedDomain) {
+            return true;
+        }
+        if (hostedDomain == null || hostedDomain.isBlank()) {
+            return false;
+        }
+        String hd = hostedDomain.trim().toLowerCase(Locale.ROOT);
+        String emailDomain = email.substring(email.lastIndexOf('@') + 1).trim().toLowerCase(Locale.ROOT);
+        return allowedEmailDomains.contains(hd) && hd.equals(emailDomain);
     }
 
     private static Set<String> parseDomains(String raw) {

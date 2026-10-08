@@ -34,8 +34,11 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -53,6 +56,7 @@ class LlmClientServiceTest {
     private final AtomicInteger status = new AtomicInteger(200);
     private final List<String> requests = new CopyOnWriteArrayList<>();
     private final List<String> requestBodies = new CopyOnWriteArrayList<>();
+    private final CountDownLatch releaseStalledResponse = new CountDownLatch(1);
     private LlmClientService client;
     private String baseUrl;
 
@@ -76,6 +80,22 @@ class LlmClientServiceTest {
                 out.write(body);
             }
         });
+        // Stalled upstream: headers and a first token, then the body stays open without any further data
+        server.createContext("/stall/", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, 0);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write("data: {\"choices\":[{\"delta\":{\"content\":\"Olá\"}}]}\n\n".getBytes(StandardCharsets.UTF_8));
+                out.flush();
+                releaseStalledResponse.await(30, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } catch (IOException ignored) {
+                // client gave up on the stalled body
+            }
+        });
+        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
         server.start();
         baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
         client = new LlmClientService(JsonMapper.builder().build(), new LlmEndpointPolicy("", baseUrl));
@@ -83,6 +103,7 @@ class LlmClientServiceTest {
 
     @AfterEach
     void stopServer() {
+        releaseStalledResponse.countDown();
         server.stop(0);
     }
 
@@ -170,5 +191,27 @@ class LlmClientServiceTest {
         assertThat(LlmClientService.isOpenAiReasoningModel("o3-mini")).isTrue();
         assertThat(LlmClientService.isOpenAiReasoningModel("gpt-4.1")).isFalse();
         assertThat(LlmClientService.isOpenAiReasoningModel(null)).isFalse();
+    }
+
+    @Test
+    @DisplayName("A response body that stalls after the headers is abandoned by the watchdog, freeing the worker")
+    void testStalledResponseBodyIsAbandoned() {
+        LlmClientService watchdogClient = new LlmClientService(JsonMapper.builder().build(),
+                new LlmEndpointPolicy("", baseUrl), Duration.ofMillis(300), Duration.ofSeconds(5), Duration.ofMillis(50));
+        try {
+            List<String> tokens = new ArrayList<>();
+            long start = System.nanoTime();
+            boolean streamed = watchdogClient.streamInference(
+                    config(ModelProvider.OLLAMA_LOCAL, "llama3.2", baseUrl + "/stall"), "", "system", "question", tokens::add);
+            Duration elapsed = Duration.ofNanos(System.nanoTime() - start);
+
+            assertThat(streamed).isFalse();
+            assertThat(tokens).containsExactly("Olá");
+            assertThat(elapsed).isLessThan(Duration.ofSeconds(5));
+            // The watchdog interrupt does not leak into the work that follows on the same thread
+            assertThat(Thread.currentThread().isInterrupted()).isFalse();
+        } finally {
+            watchdogClient.shutdownWatchdog();
+        }
     }
 }

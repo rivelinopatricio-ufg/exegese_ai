@@ -17,37 +17,18 @@
  *
  * This software uses third-party components, distributed accordingly to their own licenses.
  *******************************************************************************/
-package br.org.rivelino.exegese_ai.repository;
-
-import br.org.rivelino.exegese_ai.domain.entity.ExegeseUser;
-import br.org.rivelino.exegese_ai.domain.enums.UserRole;
-import jakarta.persistence.LockModeType;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Lock;
-
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
+package br.org.rivelino.exegese_ai.service;
 
 /**
- * Spring Data repository for ExegeseUser entities.
+ * Raised when a Google login asserts an e-mail whose local account is bound to another Google subject
+ * (OIDC {@code sub}), or a subject whose account would take an e-mail already held by another account.
+ * The login must be refused: e-mail addresses can be reassigned, Google subjects cannot.
  *
  * @author Rivelino Patrício
  */
-public interface ExegeseUserRepository extends JpaRepository<ExegeseUser, UUID> {
+public class GoogleIdentityMismatchException extends RuntimeException {
 
-    Optional<ExegeseUser> findByEmail(String email);
-
-    Optional<ExegeseUser> findByGoogleSub(String googleSub);
-
-    boolean existsByEmail(String email);
-
-    boolean existsByRole(UserRole role);
-
-    /**
-     * Active users holding the given role, locked for update so that concurrent administrative
-     * changes cannot both pass the "last active administrator" check.
-     */
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    List<ExegeseUser> findByRoleAndActiveTrue(UserRole role);
+    public GoogleIdentityMismatchException(String message) {
+        super(message);
+    }
 }

@@ -162,6 +162,10 @@ class AccountStatusIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("no está autorizado")));
 
+        mockMvc.perform(get("/login").param("error", "account_identity_mismatch").param("lang", "en"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("already linked to another Google account")));
+
         mockMvc.perform(get("/login").param("error", "<script>").param("lang", "pt_BR"))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("Falha na autenticação corporativa")))

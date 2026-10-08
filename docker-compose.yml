@@ -50,6 +50,8 @@ services:
       INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-}
       # Optional comma-separated allowlist of Google e-mail domains (empty = any verified Google account)
       ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-}
+      # With an allowlist, only accounts managed by that Google Workspace domain (hd claim); false = e-mail match only
+      REQUIRE_HOSTED_DOMAIN: ${REQUIRE_HOSTED_DOMAIN:-true}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -74,7 +76,9 @@ services:
     security_opt:
       - no-new-privileges:true
     mem_limit: ${APP_MEM_LIMIT:-2g}
-    cpus: ${APP_CPUS:-2}
+    # 0 = no CPU limit. install.sh writes APP_CPUS = host CPU count capped at 2; it must never exceed the host
+    # CPU count, otherwise Docker refuses to create the container
+    cpus: ${APP_CPUS:-0}
     pids_limit: 512
     volumes:
       - storage_data:/app/storage
@@ -123,8 +127,10 @@ services:
       - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}"
     volumes:
       - proxy_config:/config
-      # SWAG only loads site-confs/*.conf; this replaces its generated default.conf with the Exegese AI site
-      - ./docker/proxy/config/default:/config/nginx/site-confs/default.conf:ro
+      # SWAG only loads site-confs/*.conf; this replaces its generated default.conf with the Exegese AI site.
+      # install.sh generates docker/proxy/config/site.conf (untracked) with the configured ports and sets
+      # PROXY_SITE_CONFIG=site.conf; without it the tracked template (default ports 80/443) is used
+      - ./docker/proxy/config/${PROXY_SITE_CONFIG:-default}:/config/nginx/site-confs/default.conf:ro
     depends_on:
       app:
         condition: service_healthy

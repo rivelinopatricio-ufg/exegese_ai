@@ -103,11 +103,11 @@ class FlywayMigrationContainerTest {
     private ExegeseChunkRepository chunkRepository;
 
     @Test
-    @DisplayName("A fresh database is created by V1, V2 and V3 and matches the JPA entities")
+    @DisplayName("A fresh database is created by V1 to V4 and matches the JPA entities")
     void testFreshDatabaseIsMigrated() {
         List<String> versions = jdbcTemplate.queryForList(
                 "SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank", String.class);
-        assertThat(versions).containsExactly("1", "2", "3");
+        assertThat(versions).containsExactly("1", "2", "3", "4");
         assertMigratedSchema(jdbcTemplate);
     }
 
@@ -166,7 +166,7 @@ class FlywayMigrationContainerTest {
 
         List<String> versions = legacy.queryForList(
                 "SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank", String.class);
-        assertThat(versions).containsExactly("1", "2", "3");
+        assertThat(versions).containsExactly("1", "2", "3", "4");
         assertThat(legacy.queryForObject(
                 "SELECT type FROM flyway_schema_history WHERE version = '1'", String.class)).isEqualTo("BASELINE");
         assertMigratedSchema(legacy);
@@ -208,6 +208,14 @@ class FlywayMigrationContainerTest {
                 WHERE contype = 'c' AND conname IN ('exegese_user_role_check', 'ai_model_config_provider_check',
                                                     'exegese_document_segmentation_strategy_check')
                 """, Integer.class)).isZero();
+        // V4: accounts are bound to the Google subject, unique when set (unbound legacy rows stay NULL)
+        assertThat(jdbc.queryForObject("""
+                SELECT is_nullable FROM information_schema.columns
+                WHERE table_name = 'exegese_user' AND column_name = 'google_sub'
+                """, String.class)).isEqualTo("YES");
+        assertThat(jdbc.queryForList(
+                "SELECT indexname FROM pg_indexes WHERE tablename = 'exegese_user'", String.class))
+                .contains("uk_exegese_user_google_sub");
     }
 
     private static UUID insertDocument(JdbcTemplate jdbc, String fileHash) {

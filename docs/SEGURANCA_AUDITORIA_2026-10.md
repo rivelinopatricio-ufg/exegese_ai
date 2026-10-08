@@ -61,7 +61,9 @@ Observações:
 Observações:
 - **A1**: toda recuperação filtra por assuntos ativos (os IDs pedidos ∩ os ativos; sem IDs, entram os documentos com assunto ativo ou sem
   assunto). A nova propriedade `exegese.security.allowed-email-domains` (`ALLOWED_EMAIL_DOMAINS`) restringe o login a domínios.
-- **A2/A3**: o `CustomOidcUserService` recusa contas inativas, e-mails não verificados e domínios fora da allowlist. O
+- **A2/A3**: o `CustomOidcUserService` recusa contas inativas, e-mails não verificados e domínios fora da allowlist. Com allowlist,
+  exige também a claim `hd` (conta gerenciada pelo próprio domínio no Google Workspace; `REQUIRE_HOSTED_DOMAIN=false` desativa), e
+  cada conta local é vinculada ao `sub` do Google no primeiro login (migração V4): um e-mail reatribuído não assume a conta de outro. O
   `AccountStatusFilter` invalida a sessão de contas desativadas e atualiza as autoridades após mudança de papel. `INITIAL_ADMIN_EMAIL`
   não tem padrão, só promove enquanto não existir nenhum admin e é exigido pelo `install.sh`.
 - **A4**: a chave do rate limit é a conta ou `getRemoteAddr()`, com `forward-headers-strategy=native` e proxies internos confiáveis,
@@ -113,8 +115,11 @@ Observações:
 | T11 | Proxy: `sed`/`COPY` sem efeito em `/config`; `X-Accel-Buffering` enviado como header de requisição | **corrigido**. Ver observação abaixo. | `52191d4` |
 
 Observação sobre **T11**: o Dockerfile do proxy agora só fixa a imagem do SWAG. A configuração do site é montada como
-`site-confs/default.conf`, e o `install.sh` gera exatamente o arquivo versionado. Com isso foram removidos o header inútil, a rota SSE
-`/api/chat/stream/` e o `proxy_cache_path` sem uso.
+`site-confs/default.conf`. Com as portas padrão, o `install.sh` gera exatamente o modelo versionado (`docker/proxy/config/default`), mas
+grava o resultado em `docker/proxy/config/site.conf` (não versionado, selecionado por `PROXY_SITE_CONFIG`), para que o `git pull` não
+encontre o arquivo versionado alterado. Foram removidos o header de requisição inútil (`proxy_set_header X-Accel-Buffering no`) e o
+`proxy_cache_path` sem uso. A rota SSE foi mantida e corrigida para `location /api/chat/stream/` (GET `/api/chat/stream/{streamId}`), com
+`proxy_buffering off`, `proxy_cache off` e timeout de 3600s.
 
 ## Desatualização
 
@@ -129,7 +134,9 @@ Observação sobre **T11**: o Dockerfile do proxy agora só fixa a imagem do SWA
 
 ## Ações operacionais pendentes (Fase 0)
 
-Estas ações ficam com o operador de cada instalação já publicada (passo a passo no README, seção 3.6):
+Estas ações ficam com o operador de cada instalação já publicada (passo a passo no README, seção 3.6). Para atualizar o código, use
+`git checkout -- docker/proxy/config/default && git pull && ./install.sh`: o instalador antigo reescrevia esse arquivo versionado e,
+sem o `git checkout`, o `git pull` aborta.
 
 1. Rotacionar todas as chaves de API de LLM e o *client secret* do Google OAuth2 (C1 + C2 permitiam roubá-las).
 2. Trocar a senha do PostgreSQL com `ALTER USER` e atualizar o `.env` (C2).

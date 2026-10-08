@@ -47,7 +47,8 @@ public class OAuth2LoginFailureHandler implements AuthenticationFailureHandler {
     private static final Set<String> FORWARDED_ERROR_CODES = Set.of(
             CustomOidcUserService.ERROR_ACCOUNT_DISABLED,
             CustomOidcUserService.ERROR_EMAIL_NOT_VERIFIED,
-            CustomOidcUserService.ERROR_EMAIL_DOMAIN_NOT_ALLOWED
+            CustomOidcUserService.ERROR_EMAIL_DOMAIN_NOT_ALLOWED,
+            CustomOidcUserService.ERROR_ACCOUNT_IDENTITY_MISMATCH
     );
 
     @Override

@@ -44,9 +44,13 @@
                 emptyState.classList.add('hidden');
             }
 
-            // Selected subjects
+            // Selected subjects. Every box checked (the default) means "no filter": nothing is sent, so the
+            // request stays small on large catalogs and documents without a subject remain searchable
             var checkedBoxes = document.querySelectorAll('.subject-checkbox:checked');
-            var subjectIds = Array.prototype.map.call(checkedBoxes, function (cb) { return cb.value; });
+            var allBoxes = document.querySelectorAll('.subject-checkbox');
+            var subjectIds = checkedBoxes.length === allBoxes.length
+                ? []
+                : Array.prototype.map.call(checkedBoxes, function (cb) { return cb.value; });
 
             // 1. User bubble
             appendMessage('USER', question);

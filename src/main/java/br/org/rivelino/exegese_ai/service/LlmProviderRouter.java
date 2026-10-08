@@ -36,6 +36,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Dynamic AI provider router managing multi-ecosystem configurations and AES-256-GCM credentials.
@@ -75,6 +77,8 @@ public class LlmProviderRouter {
     private final Environment environment;
     private final LlmEndpointPolicy endpointPolicy;
     private final LlmClientService llmClientService;
+    /** Stored ciphertexts already reported as undecryptable, so the warning is logged once per value. */
+    private final Set<String> unreadableKeysLogged = ConcurrentHashMap.newKeySet();
 
     public LlmProviderRouter(AiModelConfigRepository modelConfigRepository,
                              CryptoService cryptoService,
@@ -232,9 +236,21 @@ public class LlmProviderRouter {
     }
 
     public String resolveApiKey(ModelProvider provider) {
-        Optional<AiModelConfig> configOpt = modelConfigRepository.findByProvider(provider);
-        if (configOpt.isPresent() && configOpt.get().getApiKeyEncrypted() != null && !configOpt.get().getApiKeyEncrypted().isBlank()) {
-            return cryptoService.decrypt(configOpt.get().getApiKeyEncrypted());
+        String stored = modelConfigRepository.findByProvider(provider)
+                .map(AiModelConfig::getApiKeyEncrypted)
+                .orElse(null);
+        if (stored != null && !stored.isBlank()) {
+            try {
+                return cryptoService.decrypt(stored);
+            } catch (IllegalStateException e) {
+                // Lost/rotated master key or a legacy value the migration could not convert: ignore the stored
+                // key (the admin can re-enter it) instead of failing the admin page and every chat question
+                if (unreadableKeysLogged.add(provider + ":" + stored.hashCode())) {
+                    log.warn("Stored API key of provider {} cannot be decrypted with the configured AES master key "
+                            + "(EXEGESE_AES_SECRET); ignoring it and falling back to the environment key. "
+                            + "Re-enter it in the admin panel.", provider);
+                }
+            }
         }
 
         // Fallback to system environment variable or Spring configuration properties

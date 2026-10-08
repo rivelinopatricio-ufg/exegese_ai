@@ -318,6 +318,33 @@ class RagOrchestrationIntegrationTest {
     }
 
     @Test
+    @DisplayName("LLM failure after some tokens sends an error, never the fallback excerpt, and stores no partial answer")
+    void testMidStreamFailureDoesNotSpliceFallback() {
+        ExegeseUser user = userRepository.save(new ExegeseUser("user.midstream@exegese.ai", "Contribuinte Parcial", UserRole.ROLE_USER));
+        ChatSession session = sessionRepository.save(new ChatSession(user, "Consulta Interrompida"));
+        ExegeseSubject subject = createGroundedSubject("midstream");
+
+        when(llmClientService.streamInference(any(), anyString(), anyString(), anyString(), any()))
+                .thenAnswer(invocation -> {
+                    Consumer<String> tokenConsumer = invocation.getArgument(4);
+                    tokenConsumer.accept("Resposta parcial ");
+                    return false; // upstream connection broke after the first token
+                });
+
+        TestSseEmitter emitter = new TestSseEmitter();
+        ragService.streamRagResponse(session.getId(), user.getId(), "Aposentadoria isenta moléstia midstream",
+                List.of(subject.getId()), Locale.ENGLISH, emitter, () -> false);
+
+        assertThat(emitter.sentText())
+                .contains("Resposta parcial ")
+                .contains("Your inquiry could not be processed. Reference code: ")
+                .doesNotContain("Fonte Oficial")
+                .doesNotContain("[DONE]");
+        List<ChatMessage> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId());
+        assertThat(messages).extracting(ChatMessage::getRole).containsExactly("USER");
+    }
+
+    @Test
     @DisplayName("Pipeline failures send a generic localized error with a reference, never the exception message")
     void testFailureDoesNotLeakExceptionMessage() {
         ExegeseUser user = userRepository.save(new ExegeseUser("user.failure@exegese.ai", "Contribuinte Falha", UserRole.ROLE_USER));

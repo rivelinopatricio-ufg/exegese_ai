@@ -152,6 +152,15 @@ public class HybridSearchService {
             log.debug("Requested subject filter has no active subject; applying default visibility scope");
             return SubjectScope.DEFAULT_VISIBILITY;
         }
+        // Every active subject selected (the chat page checks them all by default) narrows nothing: apply the
+        // default scope so that documents without any subject stay searchable
+        Long totalActive = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM exegese_subject WHERE active = TRUE",
+                new MapSqlParameterSource(), Long.class);
+        if (totalActive != null && active.size() >= totalActive) {
+            log.debug("Requested subject filter covers every active subject; applying default visibility scope");
+            return SubjectScope.DEFAULT_VISIBILITY;
+        }
         return new SubjectScope(active);
     }
 

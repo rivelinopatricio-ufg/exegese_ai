@@ -64,8 +64,12 @@ import java.util.UUID;
 @RequestMapping("/api/chat")
 public class ChatApiController {
 
-    /** Maximum number of subject filters accepted with a single question. */
-    public static final int MAX_SUBJECT_FILTERS = 50;
+    /**
+     * Maximum number of subject filters accepted with a single question. It only guards against abusive
+     * requests: the chat page checks every active subject by default, so it is far above any realistic
+     * catalog (and selecting every active subject is treated as "no filter" by the search).
+     */
+    public static final int MAX_SUBJECT_FILTERS = 1000;
 
     private static final String STREAM_PATH = "/api/chat/stream/";
 

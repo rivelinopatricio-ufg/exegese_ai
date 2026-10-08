@@ -83,17 +83,49 @@ public class UserService {
     }
 
     /**
-     * Creates or updates the local account of a Google user. The account matching
-     * {@code exegese.initial-admin-email} is promoted to ROLE_ADMIN only while no administrator exists yet.
+     * Creates or updates the local account of a Google user. The account is resolved by the Google subject
+     * (OIDC {@code sub}) first, then by e-mail: an unbound account (created before subjects were stored) is
+     * bound to the subject on this login, and an account bound to another subject is never taken over.
+     * A known subject whose Google e-mail changed keeps its account, which follows the new address.
+     * The account matching {@code exegese.initial-admin-email} is promoted to ROLE_ADMIN only while no
+     * administrator exists yet.
+     *
+     * @throws GoogleIdentityMismatchException when the e-mail belongs to an account bound to another subject
      */
     @Transactional
-    public ExegeseUser syncGoogleUser(String email, String name, String avatarUrl) {
-        Optional<ExegeseUser> existingOpt = userRepository.findByEmail(email);
-        boolean bootstrapAdmin = isInitialAdmin(email) && !userRepository.existsByRole(UserRole.ROLE_ADMIN);
+    public ExegeseUser syncGoogleUser(String email, String name, String avatarUrl, String googleSub) {
+        if (googleSub == null || googleSub.isBlank()) {
+            throw new IllegalArgumentException("Google subject (sub) is required");
+        }
+        Optional<ExegeseUser> bySubject = userRepository.findByGoogleSub(googleSub);
+        Optional<ExegeseUser> byEmail = userRepository.findByEmail(email);
+        String previousEmail = null;
 
         ExegeseUser user;
-        if (existingOpt.isPresent()) {
-            user = existingOpt.get();
+        if (bySubject.isPresent()) {
+            user = bySubject.get();
+            if (!user.getEmail().equals(email)) {
+                if (byEmail.isPresent() && !byEmail.get().getId().equals(user.getId())) {
+                    throw new GoogleIdentityMismatchException("E-mail already belongs to another local account");
+                }
+                previousEmail = user.getEmail();
+                user.setEmail(email);
+                log.info("Account {} follows the e-mail change of its Google account", user.getId());
+            }
+        } else if (byEmail.isPresent()) {
+            user = byEmail.get();
+            if (user.getGoogleSub() != null) {
+                log.warn("Google login refused: account {} is bound to another Google subject", user.getId());
+                throw new GoogleIdentityMismatchException("Local account is bound to another Google subject");
+            }
+            user.setGoogleSub(googleSub);
+        } else {
+            user = null;
+        }
+
+        // Evaluated only after the subject check above: a reassigned e-mail can never claim the bootstrap
+        boolean bootstrapAdmin = isInitialAdmin(email) && !userRepository.existsByRole(UserRole.ROLE_ADMIN);
+        if (user != null) {
             user.setName(name);
             user.setAvatarUrl(avatarUrl);
             if (bootstrapAdmin) {
@@ -101,6 +133,7 @@ public class UserService {
             }
         } else {
             user = new ExegeseUser(email, name, bootstrapAdmin ? UserRole.ROLE_ADMIN : UserRole.ROLE_USER);
+            user.setGoogleSub(googleSub);
             user.setAvatarUrl(avatarUrl);
         }
         user.setLastLoginAt(Instant.now());
@@ -109,8 +142,16 @@ public class UserService {
         if (bootstrapAdmin) {
             log.info("Bootstrap: account {} promoted to ROLE_ADMIN (initial administrator)", saved.getId());
         }
+        if (previousEmail != null) {
+            accountStatusCache.evict(previousEmail);
+        }
         accountStatusCache.evict(saved.getEmail());
         return saved;
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<ExegeseUser> findByGoogleSub(String googleSub) {
+        return userRepository.findByGoogleSub(googleSub);
     }
 
     public boolean isInitialAdmin(String email) {
