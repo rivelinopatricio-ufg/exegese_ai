@@ -282,11 +282,10 @@ mvn clean test
 | `LETSENCRYPT_STAGING` | `false` | Se `true`, utiliza o ambiente de staging do Let's Encrypt (para testes). |
 | `VALIDATION` | `http` | Método de validação ACME do Certbot no SWAG (`http`, `dns`, `duckdns`). |
 | `POSTGRES_DB` | `exegese_db` | Nome do banco de dados relacional. |
-| `POSTGRES_USER` | `exegese_user` | Usuário do banco PostgreSQL. |
-| `POSTGRES_PASSWORD` | `exegese_password` | Senha do banco PostgreSQL. |
-| `POSTGRES_PORT` | `5432` | Porta mapeada do PostgreSQL. |
+| `POSTGRES_USER` | *(gerado: `exegese_<8 hex>`)* | Usuário do banco PostgreSQL. **Obrigatório**; gerado pelo `install.sh` e preservado na reconfiguração. |
+| `POSTGRES_PASSWORD` | *(gerada: 32 caracteres alfanuméricos)* | Senha do banco PostgreSQL. **Obrigatória**; gerada pelo `install.sh` e preservada na reconfiguração. O banco não é publicado no host (só a rede interna `exegese-net`). |
 | `PORT` | `8080` | Porta interna da aplicação web (isolada na rede Docker). |
-| `EXEGESE_AES_SECRET` | *(Aleatório 32 chars)* | Chave mestra de criptografia simétrica AES-256. |
+| `EXEGESE_AES_SECRET` | *(gerada: `openssl rand -base64 32`)* | Chave mestra AES-256-GCM das chaves de API gravadas no banco: Base64 de exatamente 32 bytes. **Obrigatória** (a aplicação não sobe sem ela); mantenha-a estável e com backup. Para rodar no Eclipse/IDE, defina-a como variável de ambiente. |
 | `INITIAL_ADMIN_EMAIL` | `admin@exegese.ai` | E-mail que recebe privilégios de Administrador no 1º login. |
 | `GOOGLE_CLIENT_ID` | - | Client ID OAuth2 configurado no Google Cloud Console. |
 | `GOOGLE_CLIENT_SECRET` | - | Client Secret OAuth2 do Google Cloud Console. |
@@ -296,7 +295,8 @@ mvn clean test
 | `CEREBRAS_API_KEY` | - | Chave de API para o Cerebras Inference. |
 | `NVIDIA_API_KEY` | - | Chave de API para NVIDIA Nemotron. |
 | `DEEPSEEK_API_KEY` | - | Chave de API para DeepSeek AI. |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Endpoint da instância local do Ollama. |
+| `OLLAMA_BASE_URL` | `http://ollama:11434` | Endpoint do Ollama local (overrides `docker-compose.override.ai*.yml`), acessível só pela rede interna. |
+| `OLLAMA_CHAT_MODEL` | `llama3.2` | Modelo de chat baixado pelo `ollama_init.sh` e usado como padrão do provedor Ollama Local. |
 | `UPLOAD_DIR` | `./uploads` | Diretório de armazenamento físico dos PDFs enviados. |
 
 ### 8.1. Arquivo de Configuração Customizada (`app_config`)

@@ -46,6 +46,11 @@ public class LlmProviderRouter {
 
     private static final Logger log = LoggerFactory.getLogger(LlmProviderRouter.class);
 
+    /** Defaults seeded by earlier versions for OLLAMA_LOCAL; rows still holding them are realigned on startup. */
+    private static final String LEGACY_OLLAMA_MODEL = "qwen2.5:7b";
+    private static final String LEGACY_OLLAMA_BASE_URL = "http://localhost:11434";
+    private static final String DEFAULT_OLLAMA_MODEL = "llama3.2";
+
     private final AiModelConfigRepository modelConfigRepository;
     private final CryptoService cryptoService;
     private final Environment environment;
@@ -68,7 +73,7 @@ public class LlmProviderRouter {
         initProvider(ModelProvider.OPENAI, "OpenAI ChatGPT", "gpt-4o", "https://api.openai.com/v1", false);
         initProvider(ModelProvider.NEMOTRON, "NVIDIA Nemotron", "nvidia/nemotron-4-340b-instruct", "https://integrate.api.nvidia.com/v1", false);
         initProvider(ModelProvider.DEEPSEEK, "DeepSeek AI", "deepseek-chat", "https://api.deepseek.com/v1", false);
-        initProvider(ModelProvider.OLLAMA_LOCAL, "Ollama Local", "qwen2.5:7b", "http://localhost:11434", false);
+        initProvider(ModelProvider.OLLAMA_LOCAL, "Ollama Local", ollamaChatModel(), ollamaBaseUrl(), false);
         initProvider(ModelProvider.CEREBRAS, "Cerebras Inference", "gpt-oss-120b", "https://api.cerebras.ai/v1", false);
     }
 
@@ -86,7 +91,40 @@ public class LlmProviderRouter {
             config.setModelName("gemini-3.5-flash-lite");
             modelConfigRepository.save(config);
             log.info("Migrated legacy Gemini model configuration to gemini-3.5-flash-lite");
+        } else if (provider == ModelProvider.OLLAMA_LOCAL) {
+            realignLegacyOllamaDefaults(existing.get(), modelName, baseUrl);
         }
+    }
+
+    /**
+     * Replaces the untouched legacy OLLAMA_LOCAL defaults (a model never pulled by ollama_init.sh and a
+     * localhost URL unreachable from the app container) with the configured ones. Admin edits are kept.
+     */
+    private void realignLegacyOllamaDefaults(AiModelConfig config, String modelName, String baseUrl) {
+        boolean changed = false;
+        if (LEGACY_OLLAMA_MODEL.equals(config.getModelName()) && !LEGACY_OLLAMA_MODEL.equals(modelName)) {
+            config.setModelName(modelName);
+            changed = true;
+        }
+        if (LEGACY_OLLAMA_BASE_URL.equals(config.getBaseUrl()) && !LEGACY_OLLAMA_BASE_URL.equals(baseUrl)) {
+            config.setBaseUrl(baseUrl);
+            changed = true;
+        }
+        if (changed) {
+            config.setUpdatedAt(Instant.now());
+            modelConfigRepository.save(config);
+            log.info("Realigned legacy Ollama defaults to model {} at {}", config.getModelName(), config.getBaseUrl());
+        }
+    }
+
+    private String ollamaBaseUrl() {
+        String url = environment.getProperty("exegese.ollama.base-url");
+        return (url != null && !url.isBlank()) ? url.trim() : LEGACY_OLLAMA_BASE_URL;
+    }
+
+    private String ollamaChatModel() {
+        String model = environment.getProperty("exegese.ollama.chat-model");
+        return (model != null && !model.isBlank()) ? model.trim() : DEFAULT_OLLAMA_MODEL;
     }
 
     public List<ModelConfigDTO> getAllConfigs() {

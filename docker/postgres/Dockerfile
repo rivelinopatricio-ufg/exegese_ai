@@ -8,16 +8,15 @@ FROM pgvector/pgvector:pg17
 LABEL maintainer="Rivelino Patrício <admin@exegese.ai>"
 LABEL description="Exegese AI Database with pgvector, uuid-ossp, and auto-initialization"
 
-# Default environment configuration
-ENV POSTGRES_DB=exegese_db \
-    POSTGRES_USER=exegese_user \
-    POSTGRES_PASSWORD=exegese_password
+# Default database name only: POSTGRES_USER and POSTGRES_PASSWORD have no built-in defaults and
+# must be supplied at runtime (docker-compose.yml requires them), never baked into the image.
+ENV POSTGRES_DB=exegese_db
 
 # Copy initial schema script into Docker's entrypoint initialization directory.
 # Scripts in this directory execute automatically on container first startup (when data volume is initialized).
 COPY init-schema.sql /docker-entrypoint-initdb.d/01-init-schema.sql
 
-# Expose standard PostgreSQL port to external network
+# Standard PostgreSQL port (published by docker-compose.yml on 127.0.0.1 by default)
 EXPOSE 5432
 
 # Health check to ensure PostgreSQL is accepting connections
