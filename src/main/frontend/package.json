@@ -1,0 +1,14 @@
+{
+  "name": "exegese-ai-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Build of the self-hosted Tailwind CSS stylesheet used by the Thymeleaf templates (no CDN, CSP-friendly).",
+  "license": "MIT",
+  "scripts": {
+    "build:css": "tailwindcss --config tailwind.config.js --input input.css --output ../resources/static/css/tailwind.css --minify",
+    "watch:css": "tailwindcss --config tailwind.config.js --input input.css --output ../resources/static/css/tailwind.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.19"
+  }
+}

@@ -249,6 +249,15 @@ mvn spring-boot:run
 
 A aplicação subirá na porta `8080`.
 
+### 6.3. Front-end (Tailwind CSS e scripts)
+O CSS do Tailwind é gerado localmente (sem CDN) e o arquivo `src/main/resources/static/css/tailwind.css` fica versionado,
+então o build Maven não precisa de Node.js. Os scripts ficam em `src/main/resources/static/js/`, sem `<script>` inline nem
+atributos `onclick`, pois a Content-Security-Policy não permite `'unsafe-inline'`. Ao adicionar classes nos templates ou nos
+scripts, gere o CSS de novo e faça commit do resultado:
+```bash
+cd src/main/frontend && npm ci && npm run build:css
+```
+
 ---
 
 ## 7. Suíte de Testes Automatizados

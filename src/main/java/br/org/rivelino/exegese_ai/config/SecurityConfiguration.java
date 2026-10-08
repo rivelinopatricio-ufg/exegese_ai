@@ -37,6 +37,8 @@ import org.springframework.security.web.access.intercept.AuthorizationFilter;
 import org.springframework.security.web.authentication.DelegatingAuthenticationEntryPoint;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
+import org.springframework.security.web.header.writers.CrossOriginOpenerPolicyHeaderWriter.CrossOriginOpenerPolicy;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 
 /**
@@ -48,6 +50,26 @@ import org.springframework.security.web.servlet.util.matcher.PathPatternRequestM
 @EnableWebSecurity
 @EnableMethodSecurity
 public class SecurityConfiguration {
+
+    /**
+     * Strict Content-Security-Policy: scripts and styles only from this origin (no 'unsafe-inline', no CDN).
+     * Templates load the self-hosted Tailwind build (/css/tailwind.css) and external scripts from /js/,
+     * and wire events with addEventListener instead of inline handlers. img-src also admits Google
+     * profile pictures (*.googleusercontent.com); fetch() and EventSource stay same-origin.
+     */
+    static final String CONTENT_SECURITY_POLICY = "default-src 'self'; "
+            + "script-src 'self'; "
+            + "style-src 'self'; "
+            + "img-src 'self' data: https://*.googleusercontent.com; "
+            + "connect-src 'self'; "
+            + "font-src 'self'; "
+            + "object-src 'none'; "
+            + "base-uri 'self'; "
+            + "form-action 'self'; "
+            + "frame-ancestors 'none'";
+
+    /** Browser features the application never uses are disabled for every page. */
+    static final String PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=()";
 
     private final CustomOidcUserService customOidcUserService;
     private final GoogleOAuth2SuccessHandler successHandler;
@@ -77,7 +99,10 @@ public class SecurityConfiguration {
                 .contentTypeOptions(org.springframework.security.config.Customizer.withDefaults())
                 .frameOptions(frame -> frame.deny())
                 .httpStrictTransportSecurity(hsts -> hsts.includeSubDomains(true).maxAgeInSeconds(31536000))
-                .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; img-src 'self' data:; connect-src 'self';"))
+                .contentSecurityPolicy(csp -> csp.policyDirectives(CONTENT_SECURITY_POLICY))
+                .referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
+                .permissionsPolicyHeader(permissions -> permissions.policy(PERMISSIONS_POLICY))
+                .crossOriginOpenerPolicy(coop -> coop.policy(CrossOriginOpenerPolicy.SAME_ORIGIN))
             )
             .addFilterBefore(inputSanitizationFilter, org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(rateLimitFilter, org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)

@@ -36,6 +36,7 @@ import jakarta.servlet.http.Cookie;
 import java.util.UUID;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -74,7 +75,12 @@ class SecurityHardeningIntegrationTest {
                 .andExpect(header().string("X-Frame-Options", "DENY"))
                 .andExpect(header().string("X-Content-Type-Options", "nosniff"))
                 .andExpect(header().string("Strict-Transport-Security", containsString("max-age=31536000")))
-                .andExpect(header().string("Content-Security-Policy", containsString("default-src 'self'")));
+                .andExpect(header().string("Content-Security-Policy", containsString("default-src 'self'")))
+                // M1: scripts only from this origin, no inline code
+                .andExpect(header().string("Content-Security-Policy", containsString("script-src 'self';")))
+                .andExpect(header().string("Content-Security-Policy", not(containsString("unsafe-inline"))))
+                .andExpect(header().string("Referrer-Policy", "strict-origin-when-cross-origin"))
+                .andExpect(header().string("Cross-Origin-Opener-Policy", "same-origin"));
     }
 
     @Test

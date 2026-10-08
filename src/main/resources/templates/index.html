@@ -8,29 +8,11 @@
     <title>Exegese AI — Assistente Regulatório & Tributário</title>
     <link rel="icon" type="image/png" th:href="@{/images/logo.png}">
     <link rel="stylesheet" th:href="@{/css/app.css}">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        navy: { 900: '#0b1120', 950: '#070b14' }
-                    }
-                }
-            }
-        };
-
-        // Initialize theme early to avoid Flash of Unstyled Content (FOUC)
-        (function() {
-            const saved = localStorage.getItem('exegese_theme');
-            if (saved === 'light') {
-                document.documentElement.classList.remove('dark');
-            } else {
-                document.documentElement.classList.add('dark');
-            }
-        })();
-    </script>
+    <link rel="stylesheet" th:href="@{/css/tailwind.css}">
+    <!-- Applies the saved theme before the first paint (external file: CSP without 'unsafe-inline') -->
+    <script th:src="@{/js/theme-init.js}"></script>
+    <script th:src="@{/js/common.js}" defer></script>
+    <script th:src="@{/js/chat.js}" defer></script>
 </head>
 <body class="bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-slate-100 h-screen flex flex-col overflow-hidden transition-colors">
 
@@ -51,11 +33,12 @@
         <div class="flex items-center gap-3 text-sm">
 
             <!-- Theme Toggle Button -->
-            <button id="theme-toggle-btn" onclick="toggleTheme()"
+            <button type="button" id="theme-toggle-btn" data-action="toggle-theme"
+                    th:data-label-light="#{nav.theme.light}" th:data-label-dark="#{nav.theme.dark}"
                     class="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium transition flex items-center gap-1.5 shadow-sm"
                     th:title="#{nav.theme}">
-                <span id="theme-toggle-icon">🌓</span>
-                <span id="theme-toggle-text" th:text="#{nav.theme}">Tema</span>
+                <span id="theme-toggle-icon" data-theme-icon>🌓</span>
+                <span id="theme-toggle-text" data-theme-text th:text="#{nav.theme}">Tema</span>
             </button>
 
             <!-- Nova Conversa -->
@@ -90,7 +73,7 @@
                     Assuntos Selecionados
                 </h2>
                 <div class="space-y-2 max-h-48 overflow-y-auto pr-1" id="subjects-container">
-                    <label th:each="s : ${subjects}" class="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:white cursor-pointer select-none">
+                    <label th:each="s : ${subjects}" class="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white cursor-pointer select-none">
                         <input type="checkbox" name="subjectIds" th:value="${s.id}" checked
                                 class="subject-checkbox rounded bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-sky-600 focus:ring-0 focus:ring-offset-0">
                         <span th:text="${s.name}" class="truncate">Tributário IRPF</span>
@@ -116,9 +99,9 @@
                         <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-1">
                             <!-- Rename Button in Sidebar -->
                             <button type="button" 
-                                    th:data-session-id="${s.id}"
+                                    data-action="rename-session"
+                                    th:data-rename-url="@{/chat/{id}/rename(id=${s.id})}"
                                     th:data-session-title="${s.title}"
-                                    onclick="openRenameModal(this.getAttribute('data-session-id'), this.getAttribute('data-session-title'))"
                                     class="p-1 rounded text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition"
                                     th:title="#{chat.session.rename}">
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -127,8 +110,8 @@
                             </button>
                             <!-- Delete Button in Sidebar -->
                             <button type="button"
-                                    th:data-session-id="${s.id}"
-                                    onclick="confirmDeleteSession(this.getAttribute('data-session-id'))"
+                                    data-action="delete-session"
+                                    th:data-delete-url="@{/chat/{id}/delete(id=${s.id})}"
                                     class="p-1 rounded text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-100/50 dark:hover:bg-red-950/40 transition"
                                     th:title="#{chat.session.delete}">
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -159,9 +142,9 @@
                 <div class="flex items-center gap-2 shrink-0">
                     <!-- Rename Button -->
                     <button type="button" 
-                            th:data-session-id="${activeSession.id}"
+                            data-action="rename-session"
+                            th:data-rename-url="@{/chat/{id}/rename(id=${activeSession.id})}"
                             th:data-session-title="${activeSession.title}"
-                            onclick="openRenameModal(this.getAttribute('data-session-id'), this.getAttribute('data-session-title'))"
                             class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-sky-400 text-xs font-medium transition shadow-sm"
                             th:title="#{chat.session.rename}">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -171,8 +154,8 @@
                     </button>
                     <!-- Delete Button -->
                     <button type="button"
-                            th:data-session-id="${activeSession.id}"
-                            onclick="confirmDeleteSession(this.getAttribute('data-session-id'))"
+                            data-action="delete-session"
+                            th:data-delete-url="@{/chat/{id}/delete(id=${activeSession.id})}"
                             class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 dark:hover:bg-red-900/60 text-red-600 dark:text-red-400 text-xs font-medium transition shadow-sm"
                             th:title="#{chat.session.delete}">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -216,7 +199,7 @@
                                     th:data-question="${cit.questionNumber}"
                                     th:data-article="${cit.articleNumber}"
                                     th:data-legal="${cit.legalBasis}"
-                                    onclick="openCitationModalFromEl(this)">
+                                    data-action="open-citation">
                             </button>
                         </div>
                     </div>
@@ -225,7 +208,7 @@
 
             <!-- Formulário de Envio -->
             <div class="p-4 border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/60 backdrop-blur transition-colors">
-                <form id="chat-form" class="max-w-4xl mx-auto flex gap-3">
+                <form id="chat-form" class="max-w-4xl mx-auto flex gap-3" th:data-messages-url="@{/api/chat/messages}">
                     <input type="hidden" id="session-id" th:value="${activeSession.id}">
                     <input type="text" id="question-input" required autocomplete="off"
                            th:placeholder="#{chat.placeholder}"
@@ -248,7 +231,7 @@
         <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl transition-colors">
             <div class="flex justify-between items-start mb-4">
                 <h3 class="text-base font-bold text-sky-600 dark:text-sky-400" id="modal-title" th:text="#{chat.citations.title}">Fonte Canônica</h3>
-                <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 dark:hover:text-white text-lg">✕</button>
+                <button type="button" data-action="close-citation-modal" class="text-slate-400 hover:text-slate-700 dark:hover:text-white text-lg">✕</button>
             </div>
             <div class="space-y-3 text-sm text-slate-700 dark:text-slate-300">
                 <p><span class="font-semibold text-slate-500 dark:text-slate-400" th:text="#{chat.citations.document} + ':'">Documento:</span> <span id="modal-doc"></span></p>
@@ -258,7 +241,7 @@
                 </div>
             </div>
             <div class="mt-6 flex justify-end">
-                <button onclick="closeModal()" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 rounded-lg text-xs font-medium transition" th:text="#{chat.citations.close}">
+                <button type="button" data-action="close-citation-modal" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 rounded-lg text-xs font-medium transition" th:text="#{chat.citations.close}">
                     Fechar
                 </button>
             </div>
@@ -270,7 +253,7 @@
         <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl transition-colors">
             <div class="flex justify-between items-start mb-4">
                 <h3 class="text-base font-bold text-sky-600 dark:text-sky-400" th:text="#{chat.session.rename}">Renomear Conversa</h3>
-                <button type="button" onclick="closeRenameModal()" class="text-slate-400 hover:text-slate-700 dark:hover:text-white text-lg">✕</button>
+                <button type="button" data-action="close-rename-modal" class="text-slate-400 hover:text-slate-700 dark:hover:text-white text-lg">✕</button>
             </div>
             <form id="rename-form" th:action="@{/chat/{id}/rename(id=${activeSession.id})}" method="post">
                 <div class="mb-4">
@@ -281,7 +264,7 @@
                            class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition">
                 </div>
                 <div class="flex justify-end gap-2.5">
-                    <button type="button" onclick="closeRenameModal()" 
+                    <button type="button" data-action="close-rename-modal" 
                             class="px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 rounded-lg text-xs font-medium transition"
                             th:text="#{chat.session.cancel}">
                         Cancelar
@@ -301,14 +284,14 @@
         <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl transition-colors">
             <div class="flex justify-between items-start mb-3">
                 <h3 class="text-base font-bold text-red-600 dark:text-red-400" th:text="#{chat.session.delete}">Excluir Conversa</h3>
-                <button type="button" onclick="closeDeleteModal()" class="text-slate-400 hover:text-slate-700 dark:hover:text-white text-lg">✕</button>
+                <button type="button" data-action="close-delete-modal" class="text-slate-400 hover:text-slate-700 dark:hover:text-white text-lg">✕</button>
             </div>
             <p class="text-sm text-slate-600 dark:text-slate-300 mb-6" th:text="#{chat.session.delete.confirm}">
                 Tem certeza de que deseja excluir esta conversa? Todas as mensagens serão removidas permanentemente.
             </p>
             <form id="delete-form" th:action="@{/chat/{id}/delete(id=${activeSession.id})}" method="post">
                 <div class="flex justify-end gap-2.5">
-                    <button type="button" onclick="closeDeleteModal()" 
+                    <button type="button" data-action="close-delete-modal" 
                             class="px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 rounded-lg text-xs font-medium transition"
                             th:text="#{chat.session.cancel}">
                         Cancelar
@@ -323,290 +306,19 @@
         </div>
     </div>
 
-    <!-- Client-side Streaming SSE & UI Logic -->
-    <script th:inline="javascript">
-        const i18n = {
-            roleUser: /*[[#{chat.role.user}]]*/ 'Você',
-            roleAssistant: 'Exegese AI',
-            officialSources: /*[[#{chat.citations.title}]]*/ 'Fontes Oficiais:',
-            canonicalSource: /*[[#{chat.citations.title}]]*/ 'Fonte Canônica',
-            unspecified: /*[[#{chat.citations.unspecified}]]*/ 'Não especificado',
-            page: /*[[#{chat.citations.page}]]*/ 'Página',
-            question: /*[[#{chat.citations.question}]]*/ 'Pergunta',
-            defaultLegalBasis: /*[[#{chat.citations.default_legal_basis}]]*/ 'Documento oficial homologado pela Receita Federal do Brasil.',
-            themeLight: /*[[#{nav.theme.light}]]*/ 'Claro',
-            themeDark: /*[[#{nav.theme.dark}]]*/ 'Escuro',
-            errorRequestFailed: /*[[#{chat.error.request_failed}]]*/ 'Não foi possível enviar sua pergunta.',
-            errorRateLimited: /*[[#{chat.error.rate_limited}]]*/ 'Muitas requisições em pouco tempo.',
-            errorSessionExpired: /*[[#{chat.error.session_expired}]]*/ 'Sua sessão expirou.',
-            errorConnectionLost: /*[[#{chat.error.connection_lost}]]*/ 'A conexão com o servidor foi interrompida.'
-        };
-
-        const csrfTokenMeta = document.querySelector('meta[name="_csrf"]');
-        const csrfHeaderMeta = document.querySelector('meta[name="_csrf_header"]');
-        const chatMessagesUrl = /*[[@{/api/chat/messages}]]*/ '/api/chat/messages';
-
-        const form = document.getElementById('chat-form');
-        const input = document.getElementById('question-input');
-        const container = document.getElementById('messages-container');
-        const sessionId = document.getElementById('session-id').value;
-        const emptyState = document.getElementById('empty-state');
-
-        // Theme management logic
-        function updateThemeControls(isDark) {
-            const icon = document.getElementById('theme-toggle-icon');
-            const text = document.getElementById('theme-toggle-text');
-            const btn = document.getElementById('theme-toggle-btn');
-            if (icon && text) {
-                icon.textContent = isDark ? '☀️' : '🌙';
-                text.textContent = isDark ? i18n.themeLight : i18n.themeDark;
-            }
-            if (btn) {
-                btn.title = isDark ? ('Alternar para Modo ' + i18n.themeLight) : ('Alternar para Modo ' + i18n.themeDark);
-            }
-        }
-
-        function toggleTheme() {
-            const isDark = document.documentElement.classList.toggle('dark');
-            localStorage.setItem('exegese_theme', isDark ? 'dark' : 'light');
-            updateThemeControls(isDark);
-        }
-
-        // Initialize theme button on load
-        document.addEventListener('DOMContentLoaded', function() {
-            const isDark = document.documentElement.classList.contains('dark');
-            updateThemeControls(isDark);
-        });
-
-        // Chat Form Submission
-        form.addEventListener('submit', function (e) {
-            e.preventDefault();
-            const question = input.value.trim();
-            if (!question) return;
-
-            if (emptyState) emptyState.style.display = 'none';
-
-            // Obter assuntos marcados
-            const checkedBoxes = document.querySelectorAll('.subject-checkbox:checked');
-            const subjectIds = Array.from(checkedBoxes).map(cb => cb.value);
-
-            // 1. Renderizar bolha do usuário
-            appendMessage('USER', question);
-            input.value = '';
-
-            // 2. Criar bolha do assistente com cursor pulsante
-            const assistantBubble = appendMessage('ASSISTANT', '');
-            const contentSpan = assistantBubble.querySelector('.message-content');
-            const citationsContainer = assistantBubble.querySelector('.citations-container');
-
-            const cursor = document.createElement('span');
-            cursor.className = 'cursor-blink';
-            contentSpan.appendChild(cursor);
-
-            // 3. Passo 1: registrar a pergunta via POST (protegido por CSRF) e obter a URL de streaming
-            const body = new URLSearchParams();
-            body.append('sessionId', sessionId);
-            body.append('question', question);
-            subjectIds.forEach(id => body.append('subjectIds', id));
-
-            const headers = { 'Accept': 'application/json' };
-            if (csrfTokenMeta && csrfHeaderMeta && csrfTokenMeta.content) {
-                headers[csrfHeaderMeta.content] = csrfTokenMeta.content;
-            }
-
-            fetch(chatMessagesUrl, {
-                method: 'POST',
-                credentials: 'same-origin',
-                headers: headers,
-                body: body
-            })
-                .then(async function (response) {
-                    if (!response.ok) {
-                        showStreamError(contentSpan, cursor, await resolveRequestError(response));
-                        return;
-                    }
-                    const data = await response.json();
-                    // 4. Passo 2: abrir o stream SSE com o ticket de uso único
-                    openAnswerStream(data.streamUrl, contentSpan, cursor, citationsContainer);
-                })
-                .catch(function () {
-                    showStreamError(contentSpan, cursor, i18n.errorRequestFailed);
-                });
-        });
-
-        async function resolveRequestError(response) {
-            if (response.status === 401 || response.status === 403) {
-                return i18n.errorSessionExpired;
-            }
-            try {
-                const data = await response.json();
-                if (data && typeof data.error === 'string' && data.error) {
-                    return data.error;
-                }
-            } catch (_) {}
-            return response.status === 429 ? i18n.errorRateLimited : i18n.errorRequestFailed;
-        }
-
-        function showStreamError(contentSpan, cursor, message) {
-            cursor.remove();
-            const errorLine = document.createElement('span');
-            errorLine.className = 'block text-red-600 dark:text-red-400';
-            errorLine.textContent = message;
-            contentSpan.appendChild(errorLine);
-            container.scrollTop = container.scrollHeight;
-        }
-
-        function openAnswerStream(streamUrl, contentSpan, cursor, citationsContainer) {
-            const eventSource = new EventSource(streamUrl);
-            let finished = false;
-
-            eventSource.addEventListener('token', function (event) {
-                cursor.remove();
-                let text = event.data;
-                try {
-                    text = JSON.parse(event.data);
-                } catch (_) {}
-                contentSpan.appendChild(document.createTextNode(text));
-                contentSpan.appendChild(cursor);
-                container.scrollTop = container.scrollHeight;
-            });
-
-            eventSource.addEventListener('citation', function (event) {
-                try {
-                    const citations = JSON.parse(event.data);
-                    if (citations && citations.length > 0) {
-                        citationsContainer.classList.remove('hidden');
-                        citations.forEach(cit => {
-                            const chip = document.createElement('button');
-                            chip.className = 'citation-chip';
-                            chip.textContent = `📜 ${cit.chunkTitle || cit.documentTitle}`;
-                            chip.onclick = () => openCitationModal(cit);
-                            citationsContainer.appendChild(chip);
-                        });
-                    }
-                } catch (err) {
-                    console.error('Erro ao interpretar citações:', err);
-                }
-            });
-
-            eventSource.addEventListener('complete', function () {
-                finished = true;
-                cursor.remove();
-                eventSource.close();
-            });
-
-            // Receives both the server "error" event (generic message + reference) and connection failures
-            eventSource.addEventListener('error', function (event) {
-                eventSource.close();
-                if (finished) {
-                    return;
-                }
-                finished = true;
-                let message = i18n.errorConnectionLost;
-                if (event && typeof event.data === 'string' && event.data) {
-                    try {
-                        const payload = JSON.parse(event.data);
-                        if (payload && typeof payload.message === 'string') {
-                            message = payload.message;
-                        }
-                    } catch (_) {}
-                }
-                showStreamError(contentSpan, cursor, message);
-            });
-        }
-
-        function appendMessage(role, text) {
-            const wrapper = document.createElement('div');
-            wrapper.className = `flex ${role === 'USER' ? 'justify-end' : 'justify-start'} gap-3`;
-
-            const box = document.createElement('div');
-            box.className = `rounded-2xl p-4 max-w-2xl text-sm shadow-md transition-colors ${
-                role === 'USER'
-                    ? 'bg-sky-100 border border-sky-300 text-sky-950 dark:bg-sky-950/80 dark:border-sky-800 dark:text-sky-100'
-                    : 'bg-white border border-slate-200 text-slate-800 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100'
-            }`;
-
-            const header = document.createElement('div');
-            header.className = 'font-semibold text-xs mb-1 opacity-70';
-            header.textContent = role === 'USER' ? i18n.roleUser : i18n.roleAssistant;
-            box.appendChild(header);
-
-            const content = document.createElement('div');
-            content.className = 'message-content whitespace-pre-wrap leading-relaxed';
-            content.textContent = text;
-            box.appendChild(content);
-
-            if (role === 'ASSISTANT') {
-                const citBox = document.createElement('div');
-                citBox.className = 'citations-container hidden mt-3 pt-3 border-t border-slate-200 dark:border-slate-700/60 flex flex-wrap gap-2';
-                const citHeader = document.createElement('span');
-                citHeader.className = 'text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 w-full';
-                citHeader.textContent = i18n.officialSources;
-                citBox.appendChild(citHeader);
-                box.appendChild(citBox);
-            }
-
-            wrapper.appendChild(box);
-            container.appendChild(wrapper);
-            container.scrollTop = container.scrollHeight;
-            return box;
-        }
-
-        function openCitationModal(cit) {
-            document.getElementById('modal-title').textContent = cit.chunkTitle || i18n.canonicalSource;
-            document.getElementById('modal-doc').textContent = cit.documentTitle || i18n.unspecified;
-            document.getElementById('modal-page').textContent = cit.pageNumber ? `${i18n.page} ${cit.pageNumber}` : 'N/A';
-            document.getElementById('modal-ref').textContent = cit.questionNumber ? `${i18n.question} ${cit.questionNumber}` : (cit.articleNumber || 'Seção');
-            document.getElementById('modal-details').textContent = cit.legalBasis || i18n.defaultLegalBasis;
-            document.getElementById('citation-modal').classList.remove('hidden');
-        }
-
-        function openCitationModalFromEl(btn) {
-            const d = btn.dataset;
-            openCitationModal({
-                chunkTitle: d.title || null,
-                documentTitle: d.doc || null,
-                pageNumber: d.page || null,
-                questionNumber: d.question || null,
-                articleNumber: d.article || null,
-                legalBasis: d.legal || null
-            });
-        }
-
-        function closeModal() {
-            document.getElementById('citation-modal').classList.add('hidden');
-        }
-
-        function openRenameModal(id, title) {
-            const form = document.getElementById('rename-form');
-            form.action = '/chat/' + id + '/rename';
-            const input = document.getElementById('rename-input');
-            input.value = title || '';
-            document.getElementById('rename-modal').classList.remove('hidden');
-            setTimeout(() => input.focus(), 50);
-        }
-
-        function closeRenameModal() {
-            document.getElementById('rename-modal').classList.add('hidden');
-        }
-
-        function confirmDeleteSession(id) {
-            const form = document.getElementById('delete-form');
-            form.action = '/chat/' + id + '/delete';
-            document.getElementById('delete-modal').classList.remove('hidden');
-        }
-
-        function closeDeleteModal() {
-            document.getElementById('delete-modal').classList.add('hidden');
-        }
-
-        window.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') {
-                closeModal();
-                closeRenameModal();
-                closeDeleteModal();
-            }
-        });
-    </script>
+    <!-- Localized strings for the DOM built by /js/chat.js (read through dataset; not executable) -->
+    <div id="chat-i18n" hidden
+         th:data-role-user="#{chat.role.user}"
+         data-role-assistant="Exegese AI"
+         th:data-official-sources="#{chat.citations.title}"
+         th:data-canonical-source="#{chat.citations.title}"
+         th:data-unspecified="#{chat.citations.unspecified}"
+         th:data-page="#{chat.citations.page}"
+         th:data-question="#{chat.citations.question}"
+         th:data-default-legal-basis="#{chat.citations.default_legal_basis}"
+         th:data-error-request-failed="#{chat.error.request_failed}"
+         th:data-error-rate-limited="#{chat.error.rate_limited}"
+         th:data-error-session-expired="#{chat.error.session_expired}"
+         th:data-error-connection-lost="#{chat.error.connection_lost}"></div>
 </body>
 </html>

@@ -18,6 +18,9 @@ app_config*
 *.ipr
 *.lnk
 
+# Front-end tooling (Tailwind CLI); the generated static/css/tailwind.css IS committed
+node_modules/
+
 # Local data & Docker persistent volumes
 /pgdata/
 /ollama_data/
