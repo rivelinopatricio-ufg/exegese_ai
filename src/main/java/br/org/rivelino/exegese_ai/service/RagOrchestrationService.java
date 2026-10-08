@@ -95,6 +95,7 @@ public class RagOrchestrationService {
     private final LlmProviderRouter providerRouter;
     private final LlmClientService llmClientService;
     private final ChatSessionRepository sessionRepository;
+    private final ChatSessionAccessService sessionAccessService;
     private final ChatMessageRepository messageRepository;
     private final ObjectMapper objectMapper;
     private final MessageSource messageSource;
@@ -105,6 +106,7 @@ public class RagOrchestrationService {
                                    LlmProviderRouter providerRouter,
                                    LlmClientService llmClientService,
                                    ChatSessionRepository sessionRepository,
+                                   ChatSessionAccessService sessionAccessService,
                                    ChatMessageRepository messageRepository,
                                    ObjectMapper objectMapper,
                                    MessageSource messageSource) {
@@ -114,6 +116,7 @@ public class RagOrchestrationService {
         this.providerRouter = providerRouter;
         this.llmClientService = llmClientService;
         this.sessionRepository = sessionRepository;
+        this.sessionAccessService = sessionAccessService;
         this.messageRepository = messageRepository;
         this.objectMapper = objectMapper;
         this.messageSource = messageSource;
@@ -148,18 +151,21 @@ public class RagOrchestrationService {
      * Executes end-to-end RAG pipeline, emitting Server-Sent Events to the client.
      *
      * @param sessionId Active chat session identifier
+     * @param userId Identifier of the authenticated user, resolved in the request thread; the session must belong to it
      * @param userQuestion Question asked by the user
      * @param subjectIds Active subject filters
      * @param emitter Spring MVC SseEmitter instance
      */
     @Transactional
     public void streamRagResponse(UUID sessionId,
+                                  UUID userId,
                                   String userQuestion,
                                   List<UUID> subjectIds,
                                   SseEmitter emitter) {
         long startTime = System.currentTimeMillis();
 
-        ChatSession session = sessionRepository.findById(sessionId)
+        // Ownership is checked again here (defense in depth): a foreign session behaves as a missing one
+        ChatSession session = sessionAccessService.findOwnedSession(sessionId, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Chat session not found: " + sessionId));
 
         List<ChatMessage> history = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);

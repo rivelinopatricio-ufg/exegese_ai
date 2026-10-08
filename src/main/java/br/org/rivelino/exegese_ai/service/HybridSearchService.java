@@ -36,12 +36,19 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
 /**
  * Service orchestrating hybrid search combining semantic vector retrieval (HNSW cosine)
  * and lexical full-text search (tsvector in Portuguese) fused via Reciprocal Rank Fusion (RRF).
+ * <p>
+ * Subjects are public, but every retrieval path only returns documents visible through an
+ * <em>active</em> subject: requested subject ids are intersected with the active subjects
+ * (unknown or inactive ids are ignored), and without a usable filter the search covers documents
+ * having at least one active subject or no subject at all. Documents linked only to inactive
+ * subjects are never returned.
  *
  * @author Rivelino Patrício
  */
@@ -100,22 +107,68 @@ public class HybridSearchService {
             return Collections.emptyList();
         }
 
-        List<RetrievedChunk> vectorCandidates = retrieveVectorCandidates(query, subjectIds);
-        List<RetrievedChunk> textCandidates = retrieveTextCandidates(query, subjectIds);
+        SubjectScope scope = resolveSubjectScope(subjectIds);
+        List<RetrievedChunk> vectorCandidates = retrieveVectorCandidates(query, scope);
+        List<RetrievedChunk> textCandidates = retrieveTextCandidates(query, scope);
 
         return fuseRankings(vectorCandidates, textCandidates, topK);
     }
 
-    private List<RetrievedChunk> retrieveVectorCandidates(String query, List<UUID> subjectIds) {
+    /**
+     * Intersects the requested subject ids with the active subjects. When nothing usable remains
+     * (no request, or only unknown/inactive ids) the default visibility scope applies.
+     */
+    private SubjectScope resolveSubjectScope(List<UUID> subjectIds) {
+        if (subjectIds == null || subjectIds.isEmpty()) {
+            return SubjectScope.DEFAULT_VISIBILITY;
+        }
+        List<UUID> requested = subjectIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (requested.isEmpty()) {
+            return SubjectScope.DEFAULT_VISIBILITY;
+        }
+
+        List<UUID> active = jdbcTemplate.query(
+                "SELECT s.id FROM exegese_subject s WHERE s.active = TRUE AND s.id IN (:subjectIds)",
+                new MapSqlParameterSource("subjectIds", requested),
+                (var rs, @SuppressWarnings("unused") var rowNum) -> UUID.fromString(rs.getString("id")));
+
+        if (active.isEmpty()) {
+            log.debug("Requested subject filter has no active subject; applying default visibility scope");
+            return SubjectScope.DEFAULT_VISIBILITY;
+        }
+        return new SubjectScope(active);
+    }
+
+    /**
+     * Builds the parameterized visibility predicate over the document alias {@code d}.
+     */
+    private static String visibilityPredicate(SubjectScope scope, MapSqlParameterSource params) {
+        if (scope.isFiltered()) {
+            params.addValue("subjectIds", scope.activeSubjectIds());
+            return """
+                EXISTS (SELECT 1 FROM document_subject ds
+                        JOIN exegese_subject s ON s.id = ds.subject_id
+                        WHERE ds.document_id = d.id AND s.active = TRUE AND ds.subject_id IN (:subjectIds))
+            """;
+        }
+        return """
+            (EXISTS (SELECT 1 FROM document_subject ds
+                     JOIN exegese_subject s ON s.id = ds.subject_id
+                     WHERE ds.document_id = d.id AND s.active = TRUE)
+             OR NOT EXISTS (SELECT 1 FROM document_subject ds_any WHERE ds_any.document_id = d.id))
+        """;
+    }
+
+    private List<RetrievedChunk> retrieveVectorCandidates(String query, SubjectScope scope) {
         if (!isPostgres) {
-            return fallbackCandidateRetrieval(query, subjectIds);
+            return fallbackCandidateRetrieval(query, scope);
         }
 
         try {
             float[] embedding = embeddingModel.embed(query);
             if (isZeroOrInvalidVector(embedding)) {
                 log.info("Vector embedding unavailable or zero-magnitude, proceeding with lexical full-text retrieval");
-                return fallbackCandidateRetrieval(query, subjectIds);
+                return fallbackCandidateRetrieval(query, scope);
             }
             String vectorStr = formatVector(embedding);
 
@@ -130,13 +183,7 @@ public class HybridSearchService {
             MapSqlParameterSource params = new MapSqlParameterSource();
             params.addValue("vector", vectorStr);
 
-            if (subjectIds != null && !subjectIds.isEmpty()) {
-                sql.append("""
-                    JOIN document_subject ds ON d.id = ds.document_id
-                    WHERE ds.subject_id IN (:subjectIds)
-                """);
-                params.addValue("subjectIds", subjectIds);
-            }
+            sql.append(" WHERE ").append(visibilityPredicate(scope, params));
 
             sql.append(" ORDER BY distance ASC LIMIT ").append(CANDIDATE_LIMIT);
 
@@ -153,17 +200,17 @@ public class HybridSearchService {
         } catch (DataAccessException e) {
             log.warn("PostgreSQL vector retrieval failed ({}), falling back to lexical search: {}",
                     e.getClass().getSimpleName(), e.getMessage() != null ? e.getMessage() : "no error message");
-            return fallbackCandidateRetrieval(query, subjectIds);
+            return fallbackCandidateRetrieval(query, scope);
         } catch (RuntimeException e) {
             log.warn("Vector embedding generation failed ({}), falling back to lexical search: {}",
                     e.getClass().getSimpleName(), e.getMessage() != null ? e.getMessage() : "no error message");
-            return fallbackCandidateRetrieval(query, subjectIds);
+            return fallbackCandidateRetrieval(query, scope);
         }
     }
 
-    private List<RetrievedChunk> retrieveTextCandidates(String query, List<UUID> subjectIds) {
+    private List<RetrievedChunk> retrieveTextCandidates(String query, SubjectScope scope) {
         if (!isPostgres) {
-            return fallbackCandidateRetrieval(query, subjectIds);
+            return fallbackCandidateRetrieval(query, scope);
         }
 
         try {
@@ -178,16 +225,8 @@ public class HybridSearchService {
             MapSqlParameterSource params = new MapSqlParameterSource();
             params.addValue("query", query);
 
-            if (subjectIds != null && !subjectIds.isEmpty()) {
-                sql.append("""
-                    JOIN document_subject ds ON d.id = ds.document_id
-                    WHERE ds.subject_id IN (:subjectIds)
-                      AND c.tsv @@ plainto_tsquery('portuguese', :query)
-                """);
-                params.addValue("subjectIds", subjectIds);
-            } else {
-                sql.append(" WHERE c.tsv @@ plainto_tsquery('portuguese', :query)");
-            }
+            sql.append(" WHERE c.tsv @@ plainto_tsquery('portuguese', :query) AND ")
+               .append(visibilityPredicate(scope, params));
 
             sql.append(" ORDER BY rank DESC LIMIT ").append(CANDIDATE_LIMIT);
 
@@ -203,7 +242,7 @@ public class HybridSearchService {
             ));
         } catch (DataAccessException e) {
             log.warn("PostgreSQL FTS retrieval failed, falling back: {}", e.getMessage());
-            return fallbackCandidateRetrieval(query, subjectIds);
+            return fallbackCandidateRetrieval(query, scope);
         }
     }
 
@@ -238,23 +277,16 @@ public class HybridSearchService {
         return false;
     }
 
-    private List<RetrievedChunk> fallbackCandidateRetrieval(String query, List<UUID> subjectIds) {
+    private List<RetrievedChunk> fallbackCandidateRetrieval(String query, SubjectScope scope) {
         StringBuilder sql = new StringBuilder("""
-            SELECT DISTINCT c.id, c.document_id, d.title as doc_title, c.title as chunk_title,
+            SELECT c.id, c.document_id, d.title as doc_title, c.title as chunk_title,
                    c.content, c.sequence_number, c.metadata
             FROM exegese_chunk c
             JOIN exegese_document d ON c.document_id = d.id
         """);
 
         MapSqlParameterSource params = new MapSqlParameterSource();
-
-        if (subjectIds != null && !subjectIds.isEmpty()) {
-            sql.append("""
-                JOIN document_subject ds ON d.id = ds.document_id
-                WHERE ds.subject_id IN (:subjectIds)
-            """);
-            params.addValue("subjectIds", subjectIds);
-        }
+        sql.append(" WHERE ").append(visibilityPredicate(scope, params));
 
         List<RetrievedChunk> candidates = jdbcTemplate.query(sql.toString(), params, (var rs, @SuppressWarnings("unused") var rowNum) -> new RetrievedChunk(
                 UUID.fromString(rs.getString("id")),
@@ -413,6 +445,18 @@ public class HybridSearchService {
     ) {}
 
     private record ScoredCandidate(RetrievedChunk chunk, double score) {}
+
+    /**
+     * Subject restriction of one search: the active subject ids requested by the user, or
+     * an empty list for the default visibility scope.
+     */
+    private record SubjectScope(List<UUID> activeSubjectIds) {
+        static final SubjectScope DEFAULT_VISIBILITY = new SubjectScope(List.of());
+
+        boolean isFiltered() {
+            return !activeSubjectIds.isEmpty();
+        }
+    }
 
     private static class RrfAccumulator {
         private final RetrievedChunk chunk;

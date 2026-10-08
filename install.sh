@@ -20,7 +20,6 @@ readonly CLR_CYAN="\033[36m"
 readonly DEFAULT_HOST="exegese-ai.sytes.net"
 readonly DEFAULT_HTTP_PORT=80
 readonly DEFAULT_HTTPS_PORT=443
-readonly DEFAULT_ADMIN_EMAIL="admin@exegese.ai"
 readonly DEFAULT_POSTGRES_DB="exegese_db"
 readonly DEFAULT_OLLAMA_BASE_URL="http://ollama:11434"
 readonly DEFAULT_OLLAMA_CHAT_MODEL="llama3.2"
@@ -29,6 +28,8 @@ readonly DEFAULT_OLLAMA_CHAT_MODEL="llama3.2"
 readonly LEGACY_POSTGRES_USER="exegese_user"
 readonly LEGACY_POSTGRES_PASSWORD="exegese_password"
 readonly LEGACY_OLLAMA_BASE_URL="http://localhost:11434"
+# Former default initial administrator: a domain the operator does not control, never accepted again
+readonly LEGACY_ADMIN_EMAIL="admin@exegese.ai"
 
 # Execution Flags and Configuration Variables
 FLAG_NO_INGEST=false
@@ -45,6 +46,7 @@ EMAIL_SSL=""
 GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-}"
 GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET:-}"
 INITIAL_ADMIN_EMAIL="${INITIAL_ADMIN_EMAIL:-}"
+ALLOWED_EMAIL_DOMAINS="${ALLOWED_EMAIL_DOMAINS:-}"
 GEMINI_API_KEY="${GEMINI_API_KEY:-}"
 OPENAI_API_KEY="${OPENAI_API_KEY:-}"
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
@@ -103,7 +105,10 @@ print_help() {
     echo "                                 (spring.security.oauth2.client.registration.google.client-id)."
     echo "  --google-client-secret <sec>   Google OAuth2 Client Secret"
     echo "                                 (spring.security.oauth2.client.registration.google.client-secret)."
-    echo "  --initial-admin <email>        Initial administrator email (default: admin@exegese.ai)."
+    echo "  --initial-admin <email>        Initial administrator Google e-mail (required, no default). Receives"
+    echo "                                 ROLE_ADMIN on first login while no administrator exists yet."
+    echo "  --allowed-email-domains <list> Comma-separated Google e-mail domains allowed to sign in"
+    echo "                                 (optional; empty = any Google account with a verified e-mail)."
     echo "  --gemini-key <key>             Google Gemini API Key."
     echo "  --openai-key <key>             OpenAI API Key."
     echo "  --anthropic-key <key>          Anthropic Claude API Key."
@@ -114,7 +119,7 @@ print_help() {
     echo -e "${CLR_YELLOW}${CLR_BOLD}Security note:${CLR_RESET} secrets passed as command-line flags (--google-client-secret, --*-key)"
     echo "are visible to other local users in 'ps' and are saved in your shell history. Prefer environment"
     echo "variables (or the interactive prompts, which do not echo secrets):"
-    echo "  GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, INITIAL_ADMIN_EMAIL,"
+    echo "  GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, INITIAL_ADMIN_EMAIL, ALLOWED_EMAIL_DOMAINS,"
     echo "  GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, CEREBRAS_API_KEY"
     echo "Values typed inline before the command also reach the history: load them with 'read -rs VAR; export VAR'."
     echo ""
@@ -179,6 +184,10 @@ parse_arguments() {
                 ;;
             --initial-admin)
                 INITIAL_ADMIN_EMAIL="$2"
+                shift 2
+                ;;
+            --allowed-email-domains)
+                ALLOWED_EMAIL_DOMAINS="$2"
                 shift 2
                 ;;
             --gemini-key)
@@ -493,6 +502,44 @@ upgrade_existing_env() {
     fi
 }
 
+is_valid_email() {
+    [[ "${1:-}" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]
+}
+
+# Ensures INITIAL_ADMIN_EMAIL holds a valid address chosen by the operator (no built-in default).
+# An optional argument is offered as the default answer (e.g. the value of an existing .env).
+require_initial_admin_email() {
+    local suggestion="${1:-}"
+    local answer=""
+    if [[ "$suggestion" == "$LEGACY_ADMIN_EMAIL" ]] || ! is_valid_email "$suggestion"; then
+        suggestion=""
+    fi
+    if [[ "$INITIAL_ADMIN_EMAIL" == "$LEGACY_ADMIN_EMAIL" ]]; then
+        log_warn "INITIAL_ADMIN_EMAIL=${LEGACY_ADMIN_EMAIL} is the former public default and is no longer accepted:"
+        log_warn "anyone controlling that domain could become administrator. Use your own Google account e-mail."
+        INITIAL_ADMIN_EMAIL=""
+    fi
+    while ! is_valid_email "$INITIAL_ADMIN_EMAIL"; do
+        if [[ -n "$INITIAL_ADMIN_EMAIL" ]]; then
+            log_warn "'${INITIAL_ADMIN_EMAIL}' is not a valid e-mail address."
+        fi
+        if [[ -n "$suggestion" ]]; then
+            read -rp "Initial Administrator Google e-mail (receives ROLE_ADMIN on first login) [${suggestion}]: " answer \
+                || { log_error "INITIAL_ADMIN_EMAIL is required (set it in the environment or with --initial-admin)."; exit 1; }
+            INITIAL_ADMIN_EMAIL="${answer:-$suggestion}"
+        else
+            read -rp "Initial Administrator Google e-mail (required; receives ROLE_ADMIN on first login): " answer \
+                || { log_error "INITIAL_ADMIN_EMAIL is required (set it in the environment or with --initial-admin)."; exit 1; }
+            INITIAL_ADMIN_EMAIL="$answer"
+        fi
+        if [[ "$INITIAL_ADMIN_EMAIL" == "$LEGACY_ADMIN_EMAIL" ]]; then
+            log_warn "${LEGACY_ADMIN_EMAIL} is not accepted. Use your own Google account e-mail."
+            INITIAL_ADMIN_EMAIL=""
+            suggestion=""
+        fi
+    done
+}
+
 is_port_in_use() {
     local port="$1"
     if command -v ss &>/dev/null; then
@@ -532,8 +579,20 @@ configure_environment() {
             if [[ -z "$GOOGLE_CLIENT_SECRET" ]]; then
                 GOOGLE_CLIENT_SECRET=$(grep -E '^GOOGLE_CLIENT_SECRET=' .env | cut -d '=' -f2- || true)
             fi
+            local env_admin_email
+            env_admin_email=$(read_env_value INITIAL_ADMIN_EMAIL)
             if [[ -z "$INITIAL_ADMIN_EMAIL" ]]; then
-                INITIAL_ADMIN_EMAIL=$(grep -E '^INITIAL_ADMIN_EMAIL=' .env | cut -d '=' -f2- || echo "$DEFAULT_ADMIN_EMAIL")
+                INITIAL_ADMIN_EMAIL="$env_admin_email"
+            fi
+            require_initial_admin_email
+            if [[ "$INITIAL_ADMIN_EMAIL" != "$env_admin_email" ]]; then
+                set_env_value INITIAL_ADMIN_EMAIL "$INITIAL_ADMIN_EMAIL"
+                log_info "Updated INITIAL_ADMIN_EMAIL in .env."
+            fi
+            if [[ -n "$ALLOWED_EMAIL_DOMAINS" ]]; then
+                set_env_value ALLOWED_EMAIL_DOMAINS "$ALLOWED_EMAIL_DOMAINS"
+            else
+                ALLOWED_EMAIL_DOMAINS=$(read_env_value ALLOWED_EMAIL_DOMAINS)
             fi
             if [[ -z "$GEMINI_API_KEY" ]]; then
                 GEMINI_API_KEY=$(grep -E '^GEMINI_API_KEY=' .env | cut -d '=' -f2- || true)
@@ -622,9 +681,13 @@ configure_environment() {
         log_info "Google Client Secret configured via CLI parameter."
     fi
 
-    if [[ -z "$INITIAL_ADMIN_EMAIL" ]]; then
-        read -rp "Initial Administrator Email (receives ROLE_ADMIN on first login) [${DEFAULT_ADMIN_EMAIL}]: " input_admin
-        INITIAL_ADMIN_EMAIL=${input_admin:-$DEFAULT_ADMIN_EMAIL}
+    require_initial_admin_email "$(read_env_value INITIAL_ADMIN_EMAIL)"
+
+    if [[ -z "$ALLOWED_EMAIL_DOMAINS" ]]; then
+        local previous_domains
+        previous_domains=$(read_env_value ALLOWED_EMAIL_DOMAINS)
+        read -rp "Allowed Google e-mail domains, comma-separated (empty = any verified Google account)${previous_domains:+ [${previous_domains}]}: " input_domains
+        ALLOWED_EMAIL_DOMAINS=${input_domains:-$previous_domains}
     fi
 
     # Calculate Redirect URI for Google Cloud Console
@@ -703,8 +766,10 @@ PORT=8080
 # Back it up and keep it stable: changing or losing it makes the stored API keys unreadable.
 EXEGESE_AES_SECRET=${EXEGESE_AES_SECRET}
 
-# Initial Administrator
+# Initial Administrator: promoted to ROLE_ADMIN on login while no administrator exists yet
 INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL}
+# Google e-mail domains allowed to sign in (comma-separated; empty = any verified Google account)
+ALLOWED_EMAIL_DOMAINS=${ALLOWED_EMAIL_DOMAINS}
 
 # ==============================================================================
 # Google OAuth2 / OIDC Authentication

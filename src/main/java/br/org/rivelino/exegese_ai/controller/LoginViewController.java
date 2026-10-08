@@ -20,18 +20,39 @@
 package br.org.rivelino.exegese_ai.controller;
 
 import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+
+import java.util.Map;
 
 /**
  * Controller serving the institutional Google OAuth2 login page.
+ * Maps the login failure codes ({@code /login?error=<code>}) and the deactivated-session redirect
+ * ({@code /login?disabled}) to translated alert messages.
  *
  * @author Rivelino Patrício
  */
 @Controller
 public class LoginViewController {
 
+    private static final String GENERIC_ERROR_KEY = "login.alert.error";
+
+    private static final Map<String, String> ERROR_MESSAGE_KEYS = Map.of(
+            "account_disabled", "login.alert.account_disabled",
+            "email_not_verified", "login.alert.email_not_verified",
+            "email_domain_not_allowed", "login.alert.email_domain_not_allowed"
+    );
+
     @GetMapping("/login")
-    public String login() {
+    public String login(@RequestParam(name = "error", required = false) String error,
+                        @RequestParam(name = "disabled", required = false) String disabled,
+                        Model model) {
+        if (disabled != null) {
+            model.addAttribute("loginErrorKey", "login.alert.account_disabled");
+        } else if (error != null) {
+            model.addAttribute("loginErrorKey", ERROR_MESSAGE_KEYS.getOrDefault(error, GENERIC_ERROR_KEY));
+        }
         return "login";
     }
 }

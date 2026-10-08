@@ -23,12 +23,11 @@ import br.org.rivelino.exegese_ai.domain.entity.ChatMessage;
 import br.org.rivelino.exegese_ai.domain.entity.ChatSession;
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseSubject;
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseUser;
-import br.org.rivelino.exegese_ai.domain.enums.UserRole;
 import br.org.rivelino.exegese_ai.repository.ChatMessageRepository;
 import br.org.rivelino.exegese_ai.repository.ChatSessionRepository;
 import br.org.rivelino.exegese_ai.repository.ExegeseSubjectRepository;
-import br.org.rivelino.exegese_ai.repository.ExegeseUserRepository;
 import br.org.rivelino.exegese_ai.security.SecurityContextFacade;
+import br.org.rivelino.exegese_ai.service.ChatSessionAccessService;
 import org.springframework.context.MessageSource;
 import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.stereotype.Controller;
@@ -41,11 +40,12 @@ import org.springframework.web.bind.annotation.RequestParam;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Objects;
 import java.util.UUID;
 
 /**
  * Controller rendering the reactive conversational chat interface and session manager.
+ * Every session-scoped route goes through {@link ChatSessionAccessService}: a session owned by another
+ * user answers HTTP 404, exactly like a missing one.
  *
  * @author Rivelino Patrício
  */
@@ -53,29 +53,29 @@ import java.util.UUID;
 public class ChatViewController {
 
     private final SecurityContextFacade securityContextFacade;
-    private final ExegeseUserRepository userRepository;
     private final ChatSessionRepository sessionRepository;
     private final ChatMessageRepository messageRepository;
     private final ExegeseSubjectRepository subjectRepository;
+    private final ChatSessionAccessService sessionAccessService;
     private final MessageSource messageSource;
 
     public ChatViewController(SecurityContextFacade securityContextFacade,
-                              ExegeseUserRepository userRepository,
                               ChatSessionRepository sessionRepository,
                               ChatMessageRepository messageRepository,
                               ExegeseSubjectRepository subjectRepository,
+                              ChatSessionAccessService sessionAccessService,
                               MessageSource messageSource) {
         this.securityContextFacade = securityContextFacade;
-        this.userRepository = userRepository;
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.subjectRepository = subjectRepository;
+        this.sessionAccessService = sessionAccessService;
         this.messageSource = messageSource;
     }
 
     @GetMapping("/")
     public String index(Model model) {
-        ExegeseUser user = resolveCurrentUser();
+        ExegeseUser user = securityContextFacade.requireCurrentUser();
         List<ChatSession> sessions = sessionRepository.findByUserIdOrderByUpdatedAtDesc(user.getId());
 
         ChatSession activeSession;
@@ -91,21 +91,16 @@ public class ChatViewController {
 
     @GetMapping("/chat/{sessionId}")
     public String viewSession(@PathVariable UUID sessionId, Model model) {
-        ExegeseUser user = resolveCurrentUser();
+        ExegeseUser user = securityContextFacade.requireCurrentUser();
+        ChatSession activeSession = sessionAccessService.requireOwnedSession(sessionId, user.getId());
         List<ChatSession> sessions = sessionRepository.findByUserIdOrderByUpdatedAtDesc(user.getId());
-
-        ChatSession activeSession = sessionRepository.findById(sessionId)
-                .orElseGet(() -> {
-                    if (!sessions.isEmpty()) return sessions.get(0);
-                    return sessionRepository.save(new ChatSession(user, resolveDefaultSessionTitle()));
-                });
 
         return populateChatModel(model, user, sessions, activeSession);
     }
 
     @PostMapping("/chat/new")
     public String createNewSession() {
-        ExegeseUser user = resolveCurrentUser();
+        ExegeseUser user = securityContextFacade.requireCurrentUser();
         ChatSession newSession = sessionRepository.save(new ChatSession(user, resolveDefaultSessionTitle()));
         return "redirect:/chat/" + newSession.getId();
     }
@@ -114,16 +109,14 @@ public class ChatViewController {
     @Transactional
     public String renameSession(@PathVariable UUID sessionId,
                                 @RequestParam("title") String title) {
-        ExegeseUser user = resolveCurrentUser();
-        ChatSession session = sessionRepository.findById(sessionId).orElse(null);
+        ExegeseUser user = securityContextFacade.requireCurrentUser();
+        ChatSession session = sessionAccessService.requireOwnedSession(sessionId, user.getId());
 
-        if (session != null && canManageSession(session, user)) {
-            String sanitizedTitle = title != null ? title.trim() : "";
-            if (!sanitizedTitle.isBlank()) {
-                session.setTitle(sanitizedTitle);
-                session.setUpdatedAt(Instant.now());
-                sessionRepository.save(session);
-            }
+        String sanitizedTitle = title != null ? title.trim() : "";
+        if (!sanitizedTitle.isBlank()) {
+            session.setTitle(sanitizedTitle);
+            session.setUpdatedAt(Instant.now());
+            sessionRepository.save(session);
         }
         return "redirect:/chat/" + sessionId;
     }
@@ -131,19 +124,13 @@ public class ChatViewController {
     @PostMapping("/chat/{sessionId}/delete")
     @Transactional
     public String deleteSession(@PathVariable UUID sessionId) {
-        ExegeseUser user = resolveCurrentUser();
-        ChatSession session = sessionRepository.findById(sessionId).orElse(null);
+        ExegeseUser user = securityContextFacade.requireCurrentUser();
+        ChatSession session = sessionAccessService.requireOwnedSession(sessionId, user.getId());
 
-        if (session != null && canManageSession(session, user)) {
-            List<ChatMessage> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-            messageRepository.deleteAll(messages);
-            sessionRepository.delete(session);
-        }
+        List<ChatMessage> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        messageRepository.deleteAll(messages);
+        sessionRepository.delete(session);
         return "redirect:/";
-    }
-
-    private boolean canManageSession(ChatSession session, ExegeseUser user) {
-        return Objects.equals(session.getUser().getId(), user.getId()) || securityContextFacade.isAdmin();
     }
 
     private String resolveDefaultSessionTitle() {
@@ -152,10 +139,8 @@ public class ChatViewController {
 
     private String populateChatModel(Model model, ExegeseUser user, List<ChatSession> sessions, ChatSession activeSession) {
         List<ChatMessage> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(activeSession.getId());
+        // Subjects are public, but only active ones are offered (inactive subjects stay hidden)
         List<ExegeseSubject> subjects = subjectRepository.findByActiveTrue();
-        if (subjects.isEmpty()) {
-            subjects = subjectRepository.findAll();
-        }
 
         model.addAttribute("currentUser", user);
         model.addAttribute("sessions", sessions);
@@ -166,14 +151,5 @@ public class ChatViewController {
         model.addAttribute("canAccessAdmin", securityContextFacade.isOperatorOrAdmin());
 
         return "index";
-    }
-
-    private ExegeseUser resolveCurrentUser() {
-        return securityContextFacade.getCurrentUser().orElseGet(() -> {
-            String email = securityContextFacade.getCurrentUserEmail().orElse("default.user@exegese.ai");
-            return userRepository.findByEmail(email).orElseGet(() ->
-                    userRepository.save(new ExegeseUser(email, "Usuário Exegese", UserRole.ROLE_USER))
-            );
-        });
     }
 }

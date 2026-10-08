@@ -17,35 +17,16 @@
  *
  * This software uses third-party components, distributed accordingly to their own licenses.
  *******************************************************************************/
-package br.org.rivelino.exegese_ai.repository;
-
-import br.org.rivelino.exegese_ai.domain.entity.ExegeseUser;
-import br.org.rivelino.exegese_ai.domain.enums.UserRole;
-import jakarta.persistence.LockModeType;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Lock;
-
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
+package br.org.rivelino.exegese_ai.domain.enums;
 
 /**
- * Spring Data repository for ExegeseUser entities.
+ * Organizational permission levels an administrator can delegate to a user on a subject.
+ * Subjects are public to every logged-in user, so these levels do not filter search results.
  *
  * @author Rivelino Patrício
  */
-public interface ExegeseUserRepository extends JpaRepository<ExegeseUser, UUID> {
-
-    Optional<ExegeseUser> findByEmail(String email);
-
-    boolean existsByEmail(String email);
-
-    boolean existsByRole(UserRole role);
-
-    /**
-     * Active users holding the given role, locked for update so that concurrent administrative
-     * changes cannot both pass the "last active administrator" check.
-     */
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    List<ExegeseUser> findByRoleAndActiveTrue(UserRole role);
+public enum SubjectPermissionLevel {
+    READ,
+    WRITE,
+    MANAGE
 }

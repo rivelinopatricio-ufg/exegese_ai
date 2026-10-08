@@ -183,7 +183,8 @@ O instalador suporta execução tanto interativa quanto automatizada (CI/CD / Pr
 | `--email-ssl <email>` | E-mail para emissão e avisos do certificado Let's Encrypt. | - |
 | `--google-client-id <id>` | Google OAuth2 Client ID (`spring.security.oauth2.client.registration.google.client-id`). | - |
 | `--google-client-secret <sec>` | Google OAuth2 Client Secret (`spring.security.oauth2.client.registration.google.client-secret`). | - |
-| `--initial-admin <email>` | E-mail do administrador inicial (recebe `ROLE_ADMIN`). | `admin@exegese.ai` |
+| `--initial-admin <email>` | E-mail Google do administrador inicial: recebe `ROLE_ADMIN` no login enquanto ainda não existir nenhum administrador. **Obrigatório** (o instalador pergunta se faltar). | - |
+| `--allowed-email-domains <lista>` | Domínios de e-mail Google autorizados a entrar, separados por vírgula. Vazio = qualquer conta Google com e-mail verificado. | - |
 | `--gemini-key <key>` | Chave de API do Google Gemini. | - |
 | `--openai-key <key>` | Chave de API da OpenAI. | - |
 | `--anthropic-key <key>` | Chave de API da Anthropic Claude. | - |
@@ -286,7 +287,8 @@ mvn clean test
 | `POSTGRES_PASSWORD` | *(gerada: 32 caracteres alfanuméricos)* | Senha do banco PostgreSQL. **Obrigatória**; gerada pelo `install.sh` e preservada na reconfiguração. O banco não é publicado no host (só a rede interna `exegese-net`). |
 | `PORT` | `8080` | Porta interna da aplicação web (isolada na rede Docker). |
 | `EXEGESE_AES_SECRET` | *(gerada: `openssl rand -base64 32`)* | Chave mestra AES-256-GCM das chaves de API gravadas no banco: Base64 de exatamente 32 bytes. **Obrigatória** (a aplicação não sobe sem ela); mantenha-a estável e com backup. Para rodar no Eclipse/IDE, defina-a como variável de ambiente. |
-| `INITIAL_ADMIN_EMAIL` | `admin@exegese.ai` | E-mail que recebe privilégios de Administrador no 1º login. |
+| `INITIAL_ADMIN_EMAIL` | - | E-mail Google promovido a Administrador no login **somente enquanto não existir nenhum `ROLE_ADMIN`**. Sem valor padrão: se ficar vazio, a aplicação registra um aviso e ninguém é promovido automaticamente. |
+| `ALLOWED_EMAIL_DOMAINS` | - | Domínios de e-mail Google autorizados a entrar (`exegese.security.allowed-email-domains`), separados por vírgula. Vazio = qualquer conta Google com e-mail verificado. Contas desativadas e e-mails não verificados são sempre recusados. |
 | `GOOGLE_CLIENT_ID` | - | Client ID OAuth2 configurado no Google Cloud Console. |
 | `GOOGLE_CLIENT_SECRET` | - | Client Secret OAuth2 do Google Cloud Console. |
 | `GEMINI_API_KEY` | - | Chave de API para o Google Gemini. |

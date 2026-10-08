@@ -103,6 +103,18 @@
             </span>
         </div>
 
+        <!-- Feedback of administrative actions (flash attributes) -->
+        <div th:if="${adminSuccessKey}" role="status"
+             class="mb-4 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-sm"
+             th:text="#{${adminSuccessKey}}">Operação concluída.</div>
+        <div th:if="${adminErrorKey}" role="alert"
+             class="mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-sm"
+             th:text="#{${adminErrorKey}}">Operação recusada.</div>
+
+        <p class="mb-4 text-xs text-slate-500 dark:text-slate-400" th:text="#{admin.users.permissions.note}">
+            Os assuntos ativos são públicos para todos os usuários; os vínculos são apenas organizacionais.
+        </p>
+
         <div class="overflow-x-auto">
             <table class="w-full text-left border-collapse text-sm">
                 <thead>
@@ -118,7 +130,12 @@
                 <tbody class="divide-y divide-slate-100 dark:divide-slate-700/50">
                     <tr th:each="user : ${users}" class="hover:bg-slate-50 dark:hover:bg-slate-750 transition">
                         <td class="py-3.5 px-4">
-                            <div class="font-medium text-slate-900 dark:text-white" th:text="${user.name}">Nome</div>
+                            <div class="font-medium text-slate-900 dark:text-white">
+                                <span th:text="${user.name}">Nome</span>
+                                <span th:if="${#strings.equalsIgnoreCase(user.email, currentUserEmail)}"
+                                      class="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-sky-100 dark:bg-sky-900/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800"
+                                      th:text="#{admin.users.self_badge}">você</span>
+                            </div>
                             <div class="text-xs text-slate-500 dark:text-slate-400 font-mono" th:text="${user.email}">email@dominio.com</div>
                         </td>
                         <td class="py-3.5 px-4">
@@ -145,12 +162,32 @@
                                     <option th:each="sub : ${subjects}" th:value="${sub.id}" th:text="${sub.name}">Assunto</option>
                                 </select>
                                 <select name="level" class="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-sky-500 shadow-sm">
-                                    <option value="READ">Leitura</option>
-                                    <option value="WRITE">Escrita</option>
-                                    <option value="MANAGE">Gestão</option>
+                                    <option th:each="lvl : ${permissionLevels}" th:value="${lvl.name()}"
+                                            th:text="#{${'admin.users.level.' + lvl.name()}}">Leitura</option>
                                 </select>
                                 <button type="submit" class="px-2.5 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-500 shadow-sm transition">Vincular</button>
                             </form>
+                            <!-- Current subject links with revoke action -->
+                            <div class="mt-2" th:with="userPermissions=${permissionsByUser.get(user.id)}">
+                                <div class="text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1"
+                                     th:text="#{admin.users.permissions.current}">Assuntos vinculados</div>
+                                <span th:if="${userPermissions == null}" class="text-xs text-slate-400 dark:text-slate-500"
+                                      th:text="#{admin.users.permissions.none}">Nenhum assunto vinculado</span>
+                                <ul th:unless="${userPermissions == null}" class="flex flex-wrap gap-1.5">
+                                    <li th:each="perm : ${userPermissions}"
+                                        class="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs">
+                                        <span th:text="${perm.subjectName}">Assunto</span>
+                                        <span class="text-slate-500 dark:text-slate-400" th:text="'· ' + #{${'admin.users.level.' + perm.permissionLevel}}">· Leitura</span>
+                                        <form th:action="@{/admin/users/{id}/permissions/{subjectId}/revoke(id=${user.id},subjectId=${perm.subjectId})}" method="post" class="inline">
+                                            <button type="submit"
+                                                    class="px-1.5 rounded-full text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/60 transition"
+                                                    th:title="#{admin.users.permissions.revoke.title}"
+                                                    th:aria-label="#{admin.users.permissions.revoke}"
+                                                    th:text="#{admin.users.permissions.revoke}">Revogar</button>
+                                        </form>
+                                    </li>
+                                </ul>
+                            </div>
                         </td>
                         <td class="py-3.5 px-4 text-right">
                             <form th:action="@{/admin/users/{id}/toggle-active(id=${user.id})}" method="post">

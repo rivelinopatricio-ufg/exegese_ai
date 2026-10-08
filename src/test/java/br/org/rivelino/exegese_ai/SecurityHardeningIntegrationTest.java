@@ -118,13 +118,14 @@ class SecurityHardeningIntegrationTest {
     @DisplayName("Rate limit enforces 20 requests/minute per client IP and returns HTTP 429 on the 21st")
     void testRateLimitingEnforcedOnApiEndpoints() throws Exception {
         String testSessionId = java.util.UUID.randomUUID().toString();
-        // First 20 requests within token bucket limit should not be blocked with 429
+        // First 20 requests within token bucket limit should not be blocked with 429. The mock principal has
+        // no local account, so each one is answered 401 by the controller: rate limiting runs before it
         for (int i = 1; i <= 20; i++) {
             mockMvc.perform(get("/api/chat/stream")
                             .param("sessionId", testSessionId)
                             .param("question", "Pergunta permitida " + i)
                             .param("subjectIds", java.util.UUID.randomUUID().toString()))
-                    .andExpect(status().isOk());
+                    .andExpect(status().isUnauthorized());
         }
 
         // 21st request must be throttled with HTTP 429

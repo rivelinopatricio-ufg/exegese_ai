@@ -42,7 +42,7 @@
         </div>
 
         <!-- Feedback Alerts -->
-        <div th:if="${param.error}" class="mb-4 p-3 rounded bg-red-900/50 border border-red-700 text-red-200 text-sm" th:text="#{login.alert.error}">
+        <div th:if="${loginErrorKey}" class="mb-4 p-3 rounded bg-red-900/50 border border-red-700 text-red-200 text-sm" th:text="#{${loginErrorKey}}">
             Falha na autenticação corporativa. Tente novamente.
         </div>
 

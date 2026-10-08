@@ -44,6 +44,7 @@ import java.util.Locale;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
@@ -113,6 +114,7 @@ class RagOrchestrationIntegrationTest {
 
         ragService.streamRagResponse(
                 session.getId(),
+                user.getId(),
                 "Como preparar uma receita culinária no imposto de renda?",
                 List.of(emptySubject.getId()),
                 emitter
@@ -162,6 +164,7 @@ class RagOrchestrationIntegrationTest {
 
         ragService.streamRagResponse(
                 session.getId(),
+                user.getId(),
                 "Rendimentos de Aposentadoria maiores de 65 anos",
                 List.of(subject.getId()),
                 emitter
@@ -223,6 +226,7 @@ class RagOrchestrationIntegrationTest {
 
         ragService.streamRagResponse(
                 session.getId(),
+                user.getId(),
                 "Proventos de aposentadoria por moléstia grave são isentos?",
                 List.of(subject.getId()),
                 emitter
@@ -234,6 +238,28 @@ class RagOrchestrationIntegrationTest {
         assertThat(messages.get(1).getContent()).isEqualTo("Resposta sintetizada pelo modelo.");
         assertThat(messages.get(1).getCitations()).contains("Pergunta 021");
         verify(llmClientService).streamInference(any(), anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("RAG streaming refuses a session owned by another user and persists nothing (IDOR)")
+    void testStreamingIntoForeignSessionIsRejected() {
+        ExegeseUser owner = userRepository.save(new ExegeseUser("owner.rag@exegese.ai", "Owner", UserRole.ROLE_USER));
+        ExegeseUser intruder = userRepository.save(new ExegeseUser("intruder.rag@exegese.ai", "Intruder", UserRole.ROLE_USER));
+        ChatSession session = sessionRepository.save(new ChatSession(owner, "Sessão Privada"));
+
+        TestSseEmitter emitter = new TestSseEmitter();
+
+        assertThatThrownBy(() -> ragService.streamRagResponse(
+                session.getId(),
+                intruder.getId(),
+                "Pergunta injetada na sessão alheia",
+                List.of(),
+                emitter
+        )).isInstanceOf(IllegalArgumentException.class);
+
+        assertThat(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId())).isEmpty();
+        assertThat(emitter.sentEvents).isEmpty();
+        verify(llmClientService, never()).streamInference(any(), any(), any(), any(), any());
     }
 
     @Test

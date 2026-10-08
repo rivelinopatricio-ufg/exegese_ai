@@ -19,6 +19,9 @@
  *******************************************************************************/
 package br.org.rivelino.exegese_ai.controller;
 
+import br.org.rivelino.exegese_ai.domain.entity.ExegeseUser;
+import br.org.rivelino.exegese_ai.security.SecurityContextFacade;
+import br.org.rivelino.exegese_ai.service.ChatSessionAccessService;
 import br.org.rivelino.exegese_ai.service.RagOrchestrationService;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
@@ -30,6 +33,8 @@ import java.util.concurrent.CompletableFuture;
 
 /**
  * REST controller streaming conversational RAG responses via Server-Sent Events (SSE).
+ * The current user and the ownership of the chat session are resolved in the request thread, before
+ * any asynchronous work starts: a session owned by another user answers HTTP 404.
  *
  * @author Rivelino Patrício
  */
@@ -38,9 +43,15 @@ import java.util.concurrent.CompletableFuture;
 public class ChatApiController {
 
     private final RagOrchestrationService ragOrchestrationService;
+    private final SecurityContextFacade securityContextFacade;
+    private final ChatSessionAccessService sessionAccessService;
 
-    public ChatApiController(RagOrchestrationService ragOrchestrationService) {
+    public ChatApiController(RagOrchestrationService ragOrchestrationService,
+                             SecurityContextFacade securityContextFacade,
+                             ChatSessionAccessService sessionAccessService) {
         this.ragOrchestrationService = ragOrchestrationService;
+        this.securityContextFacade = securityContextFacade;
+        this.sessionAccessService = sessionAccessService;
     }
 
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -58,10 +69,14 @@ public class ChatApiController {
     }
 
     private SseEmitter initiateStream(UUID sessionId, String question, List<UUID> subjectIds) {
+        ExegeseUser user = securityContextFacade.requireCurrentUser();
+        sessionAccessService.requireOwnedSession(sessionId, user.getId());
+        UUID userId = user.getId();
+
         SseEmitter emitter = new SseEmitter(180000L);
         CompletableFuture.runAsync(() -> {
             try {
-                ragOrchestrationService.streamRagResponse(sessionId, question, subjectIds, emitter);
+                ragOrchestrationService.streamRagResponse(sessionId, userId, question, subjectIds, emitter);
             } catch (Exception e) {
                 emitter.completeWithError(e);
             }

@@ -20,14 +20,11 @@
 package br.org.rivelino.exegese_ai.security;
 
 import br.org.rivelino.exegese_ai.service.RagOrchestrationService;
-import br.org.rivelino.exegese_ai.service.UserService;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.oauth2.core.oidc.user.OidcUser;
-import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.LocaleResolver;
@@ -36,22 +33,19 @@ import java.io.IOException;
 import java.util.Locale;
 
 /**
- * Authentication success handler orchestrating user bootstrapping, system prompt locale configuration,
- * and post-login redirection.
+ * Authentication success handler orchestrating system prompt locale configuration and post-login redirection.
+ * The local account is synchronized once, by {@link CustomOidcUserService}, before this handler runs.
  *
  * @author Rivelino Patrício
  */
 @Component
 public class GoogleOAuth2SuccessHandler implements AuthenticationSuccessHandler {
 
-    private final UserService userService;
     private final LocaleResolver localeResolver;
     private final ObjectProvider<RagOrchestrationService> ragOrchestrationServiceProvider;
 
-    public GoogleOAuth2SuccessHandler(UserService userService,
-                                        LocaleResolver localeResolver,
+    public GoogleOAuth2SuccessHandler(LocaleResolver localeResolver,
                                         ObjectProvider<RagOrchestrationService> ragOrchestrationServiceProvider) {
-        this.userService = userService;
         this.localeResolver = localeResolver;
         this.ragOrchestrationServiceProvider = ragOrchestrationServiceProvider;
     }
@@ -60,25 +54,6 @@ public class GoogleOAuth2SuccessHandler implements AuthenticationSuccessHandler 
     public void onAuthenticationSuccess(HttpServletRequest request,
                                         HttpServletResponse response,
                                         Authentication authentication) throws IOException, ServletException {
-        Object principal = authentication.getPrincipal();
-
-        if (principal instanceof OidcUser oidcUser) {
-            String email = oidcUser.getEmail();
-            String name = oidcUser.getFullName() != null ? oidcUser.getFullName() : oidcUser.getGivenName();
-            if (name == null || name.isBlank()) {
-                name = email;
-            }
-            String avatar = oidcUser.getPicture();
-            userService.syncGoogleUser(email, name, avatar);
-        } else if (principal instanceof OAuth2User oauth2User) {
-            String email = oauth2User.getAttribute("email");
-            String name = oauth2User.getAttribute("name");
-            String avatar = oauth2User.getAttribute("picture");
-            if (email != null) {
-                userService.syncGoogleUser(email, name != null ? name : email, avatar);
-            }
-        }
-
         Locale userLocale = localeResolver.resolveLocale(request);
         ragOrchestrationServiceProvider.ifAvailable(service -> service.configureSystemPromptForLocale(userLocale));
 

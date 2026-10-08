@@ -21,6 +21,10 @@ package br.org.rivelino.exegese_ai;
 
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseUser;
 import br.org.rivelino.exegese_ai.domain.enums.UserRole;
+import br.org.rivelino.exegese_ai.repository.ExegeseSubjectRepository;
+import br.org.rivelino.exegese_ai.repository.ExegeseUserRepository;
+import br.org.rivelino.exegese_ai.repository.UserSubjectPermissionRepository;
+import br.org.rivelino.exegese_ai.security.UserAccountStatusCache;
 import br.org.rivelino.exegese_ai.service.UserService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -51,8 +55,23 @@ class SecurityIntegrationTest {
     @Autowired
     private MockMvc mockMvc;
 
+    /** Value of exegese.initial-admin-email in application-test.properties. */
+    private static final String INITIAL_ADMIN = "bootstrap.admin@exegese.test";
+
     @Autowired
     private UserService userService;
+
+    @Autowired
+    private ExegeseUserRepository userRepository;
+
+    @Autowired
+    private ExegeseSubjectRepository subjectRepository;
+
+    @Autowired
+    private UserSubjectPermissionRepository permissionRepository;
+
+    @Autowired
+    private UserAccountStatusCache accountStatusCache;
 
     @Test
     @DisplayName("Public routes are accessible anonymously without redirection")
@@ -89,13 +108,54 @@ class SecurityIntegrationTest {
     }
 
     @Test
-    @DisplayName("Bootstrap of first administrator via INITIAL_ADMIN_EMAIL")
+    @DisplayName("Bootstrap of first administrator via INITIAL_ADMIN_EMAIL while no administrator exists")
     void testBootstrapInitialAdmin() {
-        ExegeseUser adminUser = userService.syncGoogleUser("admin@exegese.ai", "Primeiro Administrador", "https://avatar.url");
+        demoteEveryAdmin();
+
+        ExegeseUser adminUser = userService.syncGoogleUser(INITIAL_ADMIN, "Primeiro Administrador", "https://avatar.url");
         assertThat(adminUser.getRole()).isEqualTo(UserRole.ROLE_ADMIN);
 
         ExegeseUser standardUser = userService.syncGoogleUser("outro@exegese.ai", "Outro Usuário", null);
         assertThat(standardUser.getRole()).isEqualTo(UserRole.ROLE_USER);
+    }
+
+    @Test
+    @DisplayName("INITIAL_ADMIN_EMAIL is not re-elevated on login once an administrator exists")
+    void testInitialAdminNotReElevatedWhenAdminExists() {
+        demoteEveryAdmin();
+        userRepository.save(new ExegeseUser("current.admin@exegese.test", "Admin Atual", UserRole.ROLE_ADMIN));
+
+        ExegeseUser newcomer = userService.syncGoogleUser(INITIAL_ADMIN, "Admin Inicial", null);
+        assertThat(newcomer.getRole()).isEqualTo(UserRole.ROLE_USER);
+
+        // An initial admin demoted later is not promoted back on the next login
+        newcomer.setRole(UserRole.ROLE_OPERATOR);
+        userRepository.save(newcomer);
+        ExegeseUser again = userService.syncGoogleUser(INITIAL_ADMIN, "Admin Inicial", null);
+        assertThat(again.getRole()).isEqualTo(UserRole.ROLE_OPERATOR);
+    }
+
+    @Test
+    @DisplayName("Blank INITIAL_ADMIN_EMAIL promotes nobody (no built-in admin@exegese.ai default)")
+    void testBlankInitialAdminGrantsNothing() {
+        demoteEveryAdmin();
+        UserService withoutInitialAdmin = new UserService(userRepository, subjectRepository, permissionRepository,
+                accountStatusCache, "");
+
+        assertThat(withoutInitialAdmin.isInitialAdmin("admin@exegese.ai")).isFalse();
+        ExegeseUser legacyDefault = withoutInitialAdmin.syncGoogleUser("admin@exegese.ai", "Antigo Padrão", null);
+        assertThat(legacyDefault.getRole()).isEqualTo(UserRole.ROLE_USER);
+        assertThat(userService.isInitialAdmin("admin@exegese.ai")).isFalse();
+    }
+
+    private void demoteEveryAdmin() {
+        for (ExegeseUser admin : userRepository.findAll()) {
+            if (admin.getRole() == UserRole.ROLE_ADMIN) {
+                admin.setRole(UserRole.ROLE_USER);
+                userRepository.save(admin);
+            }
+        }
+        userRepository.flush();
     }
 
     @Test

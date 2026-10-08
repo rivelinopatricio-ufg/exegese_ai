@@ -97,6 +97,12 @@
       <version>${bucket4j.version}</version>
     </dependency>
 
+    <!-- Caffeine in-memory cache (version managed by Spring Boot): short-lived account status cache -->
+    <dependency>
+      <groupId>com.github.ben-manes.caffeine</groupId>
+      <artifactId>caffeine</artifactId>
+    </dependency>
+
     <!-- In-memory H2 database for isolated tests -->
     <dependency>
       <groupId>com.h2database</groupId>

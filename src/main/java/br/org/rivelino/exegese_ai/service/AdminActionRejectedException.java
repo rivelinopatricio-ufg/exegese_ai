@@ -17,35 +17,24 @@
  *
  * This software uses third-party components, distributed accordingly to their own licenses.
  *******************************************************************************/
-package br.org.rivelino.exegese_ai.repository;
-
-import br.org.rivelino.exegese_ai.domain.entity.ExegeseUser;
-import br.org.rivelino.exegese_ai.domain.enums.UserRole;
-import jakarta.persistence.LockModeType;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Lock;
-
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
+package br.org.rivelino.exegese_ai.service;
 
 /**
- * Spring Data repository for ExegeseUser entities.
+ * Raised when an administrative action is refused by a governance rule (for example, an admin
+ * demoting themself or the last active administrator being removed). Carries an i18n message key.
  *
  * @author Rivelino Patrício
  */
-public interface ExegeseUserRepository extends JpaRepository<ExegeseUser, UUID> {
+public class AdminActionRejectedException extends RuntimeException {
 
-    Optional<ExegeseUser> findByEmail(String email);
+    private final String messageKey;
 
-    boolean existsByEmail(String email);
+    public AdminActionRejectedException(String messageKey) {
+        super(messageKey);
+        this.messageKey = messageKey;
+    }
 
-    boolean existsByRole(UserRole role);
-
-    /**
-     * Active users holding the given role, locked for update so that concurrent administrative
-     * changes cannot both pass the "last active administrator" check.
-     */
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    List<ExegeseUser> findByRoleAndActiveTrue(UserRole role);
+    public String getMessageKey() {
+        return messageKey;
+    }
 }

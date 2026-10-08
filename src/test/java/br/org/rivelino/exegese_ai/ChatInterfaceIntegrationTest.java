@@ -21,10 +21,12 @@ package br.org.rivelino.exegese_ai;
 
 import br.org.rivelino.exegese_ai.domain.entity.ChatMessage;
 import br.org.rivelino.exegese_ai.domain.entity.ChatSession;
+import br.org.rivelino.exegese_ai.domain.entity.ExegeseSubject;
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseUser;
 import br.org.rivelino.exegese_ai.domain.enums.UserRole;
 import br.org.rivelino.exegese_ai.repository.ChatMessageRepository;
 import br.org.rivelino.exegese_ai.repository.ChatSessionRepository;
+import br.org.rivelino.exegese_ai.repository.ExegeseSubjectRepository;
 import br.org.rivelino.exegese_ai.repository.ExegeseUserRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -37,7 +39,13 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import java.util.UUID;
+
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.hasProperty;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -71,6 +79,9 @@ class ChatInterfaceIntegrationTest {
 
     @Autowired
     private ChatMessageRepository messageRepository;
+
+    @Autowired
+    private ExegeseSubjectRepository subjectRepository;
 
     @Test
     @WithMockUser(username = "chat.user@exegese.ai", roles = "USER")
@@ -163,11 +174,11 @@ class ChatInterfaceIntegrationTest {
         userRepository.save(new ExegeseUser("attacker.rename@exegese.ai", "Attacker", UserRole.ROLE_USER));
         ChatSession session = sessionRepository.save(new ChatSession(victim, "Título Legítimo"));
 
+        // A foreign session behaves exactly like a missing one (no existence leak)
         mockMvc.perform(post("/chat/" + session.getId() + "/rename")
                         .with(csrf())
                         .param("title", "Título Hackeado"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/chat/" + session.getId()));
+                .andExpect(status().isNotFound());
 
         ChatSession unchanged = sessionRepository.findById(session.getId()).orElseThrow();
         assertThat(unchanged.getTitle()).isEqualTo("Título Legítimo");
@@ -183,10 +194,89 @@ class ChatInterfaceIntegrationTest {
 
         mockMvc.perform(post("/chat/" + session.getId() + "/delete")
                         .with(csrf()))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/"));
+                .andExpect(status().isNotFound());
 
         assertThat(sessionRepository.findById(session.getId())).isPresent();
+    }
+
+    @Test
+    @WithMockUser(username = "attacker.view@exegese.ai", roles = "USER")
+    @DisplayName("User cannot view another user's chat session (IDOR): HTTP 404, messages not rendered")
+    void testCannotViewOtherUserChatSession() throws Exception {
+        ExegeseUser victim = userRepository.save(new ExegeseUser("victim.view@exegese.ai", "Victim View", UserRole.ROLE_USER));
+        userRepository.save(new ExegeseUser("attacker.view@exegese.ai", "Attacker View", UserRole.ROLE_USER));
+        ChatSession session = sessionRepository.save(new ChatSession(victim, "Consulta Sigilosa"));
+        messageRepository.save(new ChatMessage(session, "USER", "Minha renda sigilosa de 123.456,78"));
+
+        mockMvc.perform(get("/chat/" + session.getId()))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @WithMockUser(username = "missing.view@exegese.ai", roles = "USER")
+    @DisplayName("Viewing a non-existent chat session answers HTTP 404 (same as a foreign one)")
+    void testViewMissingChatSessionReturns404() throws Exception {
+        userRepository.save(new ExegeseUser("missing.view@exegese.ai", "Missing View", UserRole.ROLE_USER));
+
+        mockMvc.perform(get("/chat/" + UUID.randomUUID()))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @WithMockUser(username = "attacker.stream@exegese.ai", roles = "USER")
+    @DisplayName("User cannot stream into another user's chat session (IDOR): HTTP 404 before any async work")
+    void testCannotStreamIntoOtherUserChatSession() throws Exception {
+        ExegeseUser victim = userRepository.save(new ExegeseUser("victim.stream@exegese.ai", "Victim Stream", UserRole.ROLE_USER));
+        userRepository.save(new ExegeseUser("attacker.stream@exegese.ai", "Attacker Stream", UserRole.ROLE_USER));
+        ChatSession session = sessionRepository.save(new ChatSession(victim, "Consulta Alheia"));
+
+        mockMvc.perform(get("/api/chat/stream")
+                        .param("sessionId", session.getId().toString())
+                        .param("question", "Pergunta injetada"))
+                .andExpect(status().isNotFound())
+                .andExpect(request().asyncNotStarted());
+
+        mockMvc.perform(post("/api/chat/stream")
+                        .with(csrf())
+                        .param("sessionId", session.getId().toString())
+                        .param("question", "Pergunta injetada"))
+                .andExpect(status().isNotFound());
+
+        assertThat(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId())).isEmpty();
+    }
+
+    @Test
+    @WithMockUser(username = "ghost.user@exegese.ai", roles = "USER")
+    @DisplayName("Principal without a local account is treated as unauthenticated (no fallback account is created)")
+    void testPrincipalWithoutLocalAccountIsNotProvisioned() throws Exception {
+        mockMvc.perform(get("/"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/login"));
+
+        mockMvc.perform(get("/api/chat/stream")
+                        .param("sessionId", UUID.randomUUID().toString())
+                        .param("question", "Pergunta"))
+                .andExpect(status().isUnauthorized());
+
+        assertThat(userRepository.findByEmail("ghost.user@exegese.ai")).isEmpty();
+        assertThat(userRepository.findByEmail("default.user@exegese.ai")).isEmpty();
+    }
+
+    @Test
+    @WithMockUser(username = "subjects.user@exegese.ai", roles = "USER")
+    @DisplayName("Chat page offers only active subjects (inactive subjects stay hidden)")
+    void testChatPageListsOnlyActiveSubjects() throws Exception {
+        userRepository.save(new ExegeseUser("subjects.user@exegese.ai", "Subjects User", UserRole.ROLE_USER));
+        ExegeseSubject active = subjectRepository.save(new ExegeseSubject("chat-ativo", "Assunto Ativo Chat", "Ativo"));
+        ExegeseSubject inactive = new ExegeseSubject("chat-inativo", "Assunto Inativo Chat", "Inativo");
+        inactive.setActive(false);
+        subjectRepository.save(inactive);
+
+        mockMvc.perform(get("/"))
+                .andExpect(status().isOk())
+                .andExpect(model().attribute("subjects", hasItem(hasProperty("code", equalTo(active.getCode())))))
+                .andExpect(model().attribute("subjects", not(hasItem(hasProperty("code", equalTo("chat-inativo"))))))
+                .andExpect(content().string(not(containsString("Assunto Inativo Chat"))));
     }
 
     @Test
