@@ -9,3 +9,7 @@ app_config*
 docs/
 pgdata/
 ollama_data/
+# Dev-only keystores (e.g. src/main/resources/cert.p12 used for Eclipse runs) never enter the image build context
+src/main/resources/cert.p12
+**/*.p12
+**/*.jks

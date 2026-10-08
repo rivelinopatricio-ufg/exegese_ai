@@ -20,9 +20,12 @@
 package br.org.rivelino.exegese_ai;
 
 import br.org.rivelino.exegese_ai.domain.entity.*;
+import br.org.rivelino.exegese_ai.domain.enums.ModelProvider;
 import br.org.rivelino.exegese_ai.domain.enums.UserRole;
 import br.org.rivelino.exegese_ai.repository.*;
 import br.org.rivelino.exegese_ai.service.AntiHallucinationGuard;
+import br.org.rivelino.exegese_ai.service.LlmClientService;
+import br.org.rivelino.exegese_ai.service.LlmProviderRouter;
 import br.org.rivelino.exegese_ai.service.QueryRewritingService;
 import br.org.rivelino.exegese_ai.service.RagOrchestrationService;
 import jakarta.persistence.EntityManager;
@@ -38,8 +41,14 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * Integration tests for RAG pipeline orchestration, zero hallucination guard, and SSE streaming.
@@ -78,6 +87,13 @@ class RagOrchestrationIntegrationTest {
     @Autowired
     private EntityManager entityManager;
 
+    /** Hermetic mock provided by TestLlmClientConfiguration (no real LLM HTTP calls in tests). */
+    @Autowired
+    private LlmClientService llmClientService;
+
+    @Autowired
+    private LlmProviderRouter providerRouter;
+
     @BeforeEach
     void setUpLocale() {
         ragService.configureSystemPromptForLocale(Locale.of("pt", "BR"));
@@ -107,6 +123,7 @@ class RagOrchestrationIntegrationTest {
         assertThat(messages.get(0).getRole()).isEqualTo("USER");
         assertThat(messages.get(1).getRole()).isEqualTo("ASSISTANT");
         assertThat(messages.get(1).getContent()).isEqualTo(AntiHallucinationGuard.CANONICAL_REFUSAL_MESSAGE);
+        verify(llmClientService, never()).streamInference(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -156,6 +173,67 @@ class RagOrchestrationIntegrationTest {
         assertThat(messages.get(1).getContent()).contains("Previdência Social");
         assertThat(messages.get(1).getContent()).contains("1.903,98");
         assertThat(messages.get(1).getCitations()).contains("Pergunta 020");
+    }
+
+    @Test
+    @DisplayName("Grounded RAG streams the LLM answer tokens and persists the synthesized response")
+    void testGroundedResponseStreamedByLlm() {
+        ExegeseUser user = userRepository.save(new ExegeseUser("user.llm@exegese.ai", "Contribuinte LLM", UserRole.ROLE_USER));
+        ChatSession session = sessionRepository.save(new ChatSession(user, "Consulta LLM"));
+
+        ExegeseSubject subject = subjectRepository.save(
+                new ExegeseSubject("irpf-llm", "IRPF LLM", "Assunto LLM")
+        );
+
+        ExegeseDocument doc = new ExegeseDocument(
+                "Manual IRPF 2026 LLM",
+                "manual-llm.pdf",
+                "storage/manual-llm.pdf",
+                "hash-doc-llm-77",
+                1024L,
+                "PDF"
+        );
+        doc.addSubject(subject);
+        doc = documentRepository.save(doc);
+
+        chunkRepository.save(new ExegeseChunk(
+                doc,
+                "hash-chunk-llm-77",
+                21,
+                "Pergunta 021 — Moléstia Grave",
+                "Os proventos de aposentadoria recebidos por portadores de moléstia grave são isentos do imposto de renda.",
+                "{\"page\": 36, \"questionNumber\": 21}"
+        ));
+
+        entityManager.flush();
+
+        // Ensure the default provider has a key so the LLM path is taken (rolled back by @Transactional)
+        providerRouter.setDefaultProvider(ModelProvider.GEMINI);
+        providerRouter.updateConfig(ModelProvider.GEMINI, null, null, null, "test-gemini-key", null, null);
+
+        when(llmClientService.streamInference(any(), anyString(), anyString(), anyString(), any()))
+                .thenAnswer(invocation -> {
+                    Consumer<String> tokenConsumer = invocation.getArgument(4);
+                    tokenConsumer.accept("Resposta sintetizada ");
+                    tokenConsumer.accept("pelo modelo.");
+                    return true;
+                });
+
+        TestSseEmitter emitter = new TestSseEmitter();
+
+        ragService.streamRagResponse(
+                session.getId(),
+                "Proventos de aposentadoria por moléstia grave são isentos?",
+                List.of(subject.getId()),
+                emitter
+        );
+
+        List<ChatMessage> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId());
+        assertThat(messages).hasSize(2);
+        assertThat(messages.get(1).getRole()).isEqualTo("ASSISTANT");
+        assertThat(messages.get(1).getContent()).isEqualTo("Resposta sintetizada pelo modelo.");
+        assertThat(messages.get(1).getCitations()).contains("Pergunta 021");
+        verify(llmClientService).streamInference(any(), anyString(), anyString(), anyString(), any());
     }
 
     @Test
