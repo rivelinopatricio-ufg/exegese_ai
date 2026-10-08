@@ -2,11 +2,13 @@
 # Exegese AI - Production Multi-Container Orchestration
 # Services: PostgreSQL 17 + PGVector, Spring Boot 4.1.1, SWAG Reverse Proxy
 # Required variables (generated into .env by install.sh): POSTGRES_USER, POSTGRES_PASSWORD, EXEGESE_AES_SECRET
+# Only the proxy publishes ports (HTTP_PORT/HTTPS_PORT, default 80/443); app and database stay on exegese-net.
+# Third-party images are pinned to explicit versions (Dependabot proposes updates for the Dockerfiles).
 # ==============================================================================
 
 services:
   postgres:
-    image: pgvector/pgvector:pg17
+    image: pgvector/pgvector:0.8.7-pg17
     container_name: db
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-exegese_db}
@@ -19,6 +21,9 @@ services:
     # user created by the image (POSTGRES_USER) is a superuser, so V1 can also create the pgvector extension.
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # The entrypoint only drops privileges (gosu), which no-new-privileges allows
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
@@ -61,9 +66,26 @@ services:
       EXEGESE_AES_SECRET: ${EXEGESE_AES_SECRET:?EXEGESE_AES_SECRET must be set in .env (openssl rand -base64 32)}
       # Original uploaded PDFs (<sha256>.pdf), kept for asynchronous ingestion and re-ingestion
       UPLOAD_DIR: /app/uploads
+    # Hardening: immutable root filesystem, no Linux capabilities (non-root on port 8080), no privilege
+    # escalation, bounded memory/CPU. The JVM sizes its heap from the memory limit (-XX:MaxRAMPercentage=75).
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${APP_MEM_LIMIT:-2g}
+    cpus: ${APP_CPUS:-2}
+    pids_limit: 512
     volumes:
       - storage_data:/app/storage
       - upload_data:/app/uploads
+      # Writable scratch space (java.io.tmpdir): multipart uploads, PDFBox stream/font cache, Tomcat work dirs.
+      # tmpfs pages count towards mem_limit.
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 268435456
+          mode: 01777
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
       interval: 10s
@@ -89,8 +111,11 @@ services:
       - URL=${SERVER_NAME:-exegese-ai.sytes.net}
       - SUBDOMAINS=
       - VALIDATION=${VALIDATION:-http}
-      - EMAIL=${LETSENCRYPT_EMAIL:-admin@exegese.ai}
+      # Let's Encrypt account e-mail (expiry notices); empty = SWAG registers without an e-mail
+      - EMAIL=${LETSENCRYPT_EMAIL:-}
       - STAGING=${LETSENCRYPT_STAGING:-false}
+    # NET_ADMIN is required only by SWAG's built-in fail2ban, which bans abusive clients with iptables rules
+    # (jails in the proxy_config volume, /config/fail2ban). Remove it if fail2ban is not wanted.
     cap_add:
       - NET_ADMIN
     ports:
@@ -98,7 +123,8 @@ services:
       - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}"
     volumes:
       - proxy_config:/config
-      - ./docker/proxy/config/default:/config/nginx/site-confs/default
+      # SWAG only loads site-confs/*.conf; this replaces its generated default.conf with the Exegese AI site
+      - ./docker/proxy/config/default:/config/nginx/site-confs/default.conf:ro
     depends_on:
       app:
         condition: service_healthy

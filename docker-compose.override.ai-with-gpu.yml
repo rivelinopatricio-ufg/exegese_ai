@@ -7,7 +7,7 @@
 services:
   ollama:
     container_name: exegese_ollama
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.40.1
     deploy:
       resources:
         reservations:

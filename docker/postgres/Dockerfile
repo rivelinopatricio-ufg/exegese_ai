@@ -3,7 +3,7 @@
 # Base image includes PostgreSQL 17 with the pgvector extension pre-compiled
 # ==============================================================================
 
-FROM pgvector/pgvector:pg17
+FROM pgvector/pgvector:0.8.7-pg17
 
 LABEL maintainer="Rivelino Patrício <admin@exegese.ai>"
 LABEL description="Exegese AI Database with pgvector, uuid-ossp, and auto-initialization"

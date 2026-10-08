@@ -7,7 +7,7 @@
 services:
   ollama:
     container_name: exegese_ollama
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.40.1
     environment:
       OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-llama3.2}
     volumes:
