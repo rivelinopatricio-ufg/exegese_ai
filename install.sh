@@ -244,11 +244,41 @@ configure_environment() {
         read -rp "Do you want to reconfigure environment variables? (y/N): " reconf
         if [[ ! "$reconf" =~ ^[yY]$ ]]; then
             log_info "Using existing configuration from .env."
+            if [[ -z "$HOST_NAME" ]]; then
+                HOST_NAME=$(grep -E '^SERVER_NAME=' .env | cut -d '=' -f2- || true)
+                if [[ -z "$HOST_NAME" ]]; then
+                    HOST_NAME=$(grep -E '^URL=' .env | cut -d '=' -f2- || echo "$DEFAULT_HOST")
+                fi
+            fi
             if [[ -z "$HTTPS_PORT" ]]; then
                 HTTPS_PORT=$(grep -E '^HTTPS_PORT=' .env | cut -d '=' -f2- || echo "443")
             fi
             if [[ -z "$HTTP_PORT" ]]; then
                 HTTP_PORT=$(grep -E '^HTTP_PORT=' .env | cut -d '=' -f2- || echo "80")
+            fi
+            if [[ -z "$EMAIL_SSL" ]]; then
+                EMAIL_SSL=$(grep -E '^LETSENCRYPT_EMAIL=' .env | cut -d '=' -f2- || echo "admin@${HOST_NAME}")
+            fi
+            if [[ -z "$GOOGLE_CLIENT_ID" ]]; then
+                GOOGLE_CLIENT_ID=$(grep -E '^GOOGLE_CLIENT_ID=' .env | cut -d '=' -f2- || true)
+            fi
+            if [[ -z "$GOOGLE_CLIENT_SECRET" ]]; then
+                GOOGLE_CLIENT_SECRET=$(grep -E '^GOOGLE_CLIENT_SECRET=' .env | cut -d '=' -f2- || true)
+            fi
+            if [[ -z "$INITIAL_ADMIN_EMAIL" ]]; then
+                INITIAL_ADMIN_EMAIL=$(grep -E '^INITIAL_ADMIN_EMAIL=' .env | cut -d '=' -f2- || echo "$DEFAULT_ADMIN_EMAIL")
+            fi
+            if [[ -z "$GEMINI_API_KEY" ]]; then
+                GEMINI_API_KEY=$(grep -E '^GEMINI_API_KEY=' .env | cut -d '=' -f2- || true)
+            fi
+            if [[ -z "$OPENAI_API_KEY" ]]; then
+                OPENAI_API_KEY=$(grep -E '^OPENAI_API_KEY=' .env | cut -d '=' -f2- || true)
+            fi
+            if [[ -z "$ANTHROPIC_API_KEY" ]]; then
+                ANTHROPIC_API_KEY=$(grep -E '^ANTHROPIC_API_KEY=' .env | cut -d '=' -f2- || true)
+            fi
+            if [[ -z "$CEREBRAS_API_KEY" ]]; then
+                CEREBRAS_API_KEY=$(grep -E '^CEREBRAS_API_KEY=' .env | cut -d '=' -f2- || true)
             fi
             return 0
         fi
@@ -607,9 +637,10 @@ bootstrap_ingestion() {
 }
 
 print_summary() {
+    local host="${HOST_NAME:-$DEFAULT_HOST}"
     local proto="https"
     local port_part=""
-    if [[ "$HOST_NAME" == "localhost" || "$HOST_NAME" == "127.0.0.1" ]]; then
+    if [[ "$host" == "localhost" || "$host" == "127.0.0.1" ]]; then
         if [[ "$HTTPS_PORT" == "443" || -z "$HTTPS_PORT" ]]; then
             proto="http"
             if [[ "$HTTP_PORT" != "80" && -n "$HTTP_PORT" ]]; then
@@ -623,7 +654,7 @@ print_summary() {
             port_part=":${HTTPS_PORT}"
         fi
     fi
-    local base_url="${proto}://${HOST_NAME}${port_part}"
+    local base_url="${proto}://${host}${port_part}"
     local redirect_uri="${base_url}/login/oauth2/code/google"
 
     echo ""

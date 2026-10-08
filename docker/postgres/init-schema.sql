@@ -79,6 +79,12 @@ CREATE TABLE IF NOT EXISTS exegese_chunk (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Garantir colunas vetoriais e textuais caso a tabela tenha sido gerada via JPA/Hibernate
+ALTER TABLE IF EXISTS exegese_chunk ADD COLUMN IF NOT EXISTS embedding VECTOR(768);
+ALTER TABLE IF EXISTS exegese_chunk ADD COLUMN IF NOT EXISTS tsv TSVECTOR GENERATED ALWAYS AS (
+    to_tsvector('portuguese', coalesce(title, '') || ' ' || content)
+) STORED;
+
 -- 7. Tabela de Configuração Dinâmica dos Modelos de IA
 CREATE TABLE IF NOT EXISTS ai_model_config (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

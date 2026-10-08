@@ -134,9 +134,16 @@ public class DocumentIngestionService {
 
         Optional<ExegeseDocument> existingDoc = documentRepository.findByFileHashSha256(fileHash);
         if (existingDoc.isPresent()) {
-            log.info("Document with SHA-256 {} already indexed (ID: {}). Reusing existing record.",
-                    fileHash, existingDoc.get().getId());
-            return existingDoc.get();
+            ExegeseDocument existing = existingDoc.get();
+            if ("INDEXED".equals(existing.getStatus())) {
+                log.info("Document with SHA-256 {} already indexed (ID: {}). Reusing existing record.",
+                        fileHash, existing.getId());
+                return existing;
+            }
+            log.warn("Document with SHA-256 {} previously in state '{}'. Removing incomplete record to permit re-indexing.",
+                    fileHash, existing.getStatus());
+            documentRepository.delete(existing);
+            documentRepository.flush();
         }
 
         PdfTextExtractor.ExtractedPdf extractedPdf;
