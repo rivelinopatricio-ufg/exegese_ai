@@ -5,7 +5,7 @@
 [![Spring AI](https://img.shields.io/badge/Spring%20AI-2.0.1-blue.svg)](https://spring.io/projects/spring-ai)
 [![Reverse Proxy](https://img.shields.io/badge/Proxy-SWAG%20%28NGINX%20%2B%20Certbot%20%2B%20Fail2ban%29-success.svg)](https://docs.linuxserver.io/general/swag)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17%20%2B%20pgvector-blue.svg)](https://github.com/pgvector/pgvector)
-[![Tests](https://img.shields.io/badge/Tests-59%20Passed%20%28100%25%29-brightgreen.svg)](#7-suíte-de-testes-automatizados)
+[![Tests](https://img.shields.io/badge/Tests-181%20%28JUnit%20%2B%20Testcontainers%29-brightgreen.svg)](#7-suíte-de-testes-automatizados)
 [![i18n](https://img.shields.io/badge/i18n-pt--BR%20%7C%20en--US%20%7C%20es--ES-blueviolet.svg)](#1-destaques-e-proposta-de-valor)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -48,7 +48,8 @@
   - **Emissão no Startup**: O próprio proxy solicita o certificado Let's Encrypt na inicialização antes de expor os serviços.
   - **Renovação Automática via Cron**: O processo cron interno do contêiner verifica periodicamente (2x ao dia) e renova silenciosamente os certificados SSL/TLS com recarregamento suave (*reload*) do NGINX.
   - **Isolamento de Aplicação**: A porta 8080 do Spring Boot fica totalmente confinada na rede interna Docker (`exegese-net`).
-  - **Otimização para SSE**: Rota `/api/chat/stream/{streamId}` com `proxy_buffering off;`, `X-Accel-Buffering no;` e timeout de 3600s para streaming contínuo sem bufferização.
+  - **Otimização para SSE**: Rota `/api/chat/stream/{streamId}` com `proxy_buffering off;` e timeout de 3600s para streaming contínuo sem bufferização (a própria aplicação responde com `X-Accel-Buffering: no`).
+  - **IP real do cliente**: o NGINX de borda **sobrescreve** `X-Forwarded-For` com `$remote_addr` (não concatena um valor enviado pelo cliente), e o Tomcat só aceita esse cabeçalho vindo dos proxies internos; o rate limit não pode ser burlado com um IP forjado.
   - **Portas e Host Customizáveis**: Permite expor portas alternativas (ex: 8080/8443) caso as portas padrão 80/443 estejam ocupadas no servidor host.
 - **Criptografia Mestra AES-256**: Chaves de API podem ser configuradas no arquivo `.env` ou gerenciadas em tempo real via Painel Administrativo com criptografia simétrica AES-256 no banco de dados.
 - **Configuração Customizada Externa (`app_config`)**: Suporte a injeção e sobrescrita de propriedades de `application.properties` através de arquivo externo `app_config`, mantendo credenciais locais e parâmetros específicos isolados do versionamento Git.
@@ -66,7 +67,7 @@
                                          ▼ Portas Customizadas (${HTTP_PORT} / ${HTTPS_PORT})
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │                        PROXY REVERSO HARDENED (SWAG)                                   │
-│                        (Imagem: linuxserver/swag:latest)                               │
+│                        (Imagem: linuxserver/swag:5.8.0)                                │
 │                         Domínio: ${SERVER_NAME} / ${URL}                               │
 │                                                                                        │
 │  - Gestão TLS/SSL Autônoma: Solicitação no Startup + Renovação Automática via Cron    │
@@ -74,7 +75,7 @@
 │  - Ocultação de Assinatura: server_tokens off                                          │
 │  - Otimização SSE: proxy_buffering off; proxy_read_timeout 3600s                       │
 │  - Limites de Payload: 50MB (upload multipart de PDF) / 10MB (geral)                   │
-│  - Repasse de Cabeçalhos: X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Port         │
+│  - Cabeçalhos: X-Forwarded-For sobrescrito com o IP real, X-Forwarded-Proto/Port       │
 │  - Volume Persistente Único: proxy_config:/config                                      │
 └───────────────────────────────────────┬────────────────────────────────────────────────┘
                                         │ Rede Interna Docker (exegese-net)
@@ -82,12 +83,12 @@
                                         ▼
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │                        APLICAÇÃO EXEGESE AI (SPRING BOOT 4.1.1)                        │
-│                               Runtime: Java 25 Nativo                                  │
+│        Runtime: Java 25 (JRE, usuário 10001, rootfs somente leitura, perfil prod)      │
 │                                                                                        │
 │  - Spring AI 2.0.1 (RAG, ChatClient, RRF Search, Multi-Provider Router)                │
 │  - 7 Provedores AI: Gemini, Claude, OpenAI, Cerebras, Nemotron, DeepSeek, Ollama       │
 │  - i18n Resolver & Locale Context: pt-BR, en-US, es-ES (UI + Dynamic System Prompts)   │
-│  - RateLimitFilter (Bucket4j - Limitação por IP)                                       │
+│  - RateLimitFilter (Bucket4j - Limitação por conta ou IP real)                         │
 │  - InputSanitizationFilter (Mitigação de Prompt Injection)                             │
 │  - Gestão Multipart: Upload de documentos até 50MB e ingestão SHA-256 idempotente       │
 │  - Google OAuth2 Client (spring.security.oauth2.client.registration.google.*)          │
@@ -173,6 +174,72 @@ sudo ufw allow 446/tcp comment 'Exegese AI HTTPS Alt'
 sudo ufw status verbose
 ```
 
+#### Portas publicadas pelo `docker-compose.yml`
+Só o proxy SWAG publica portas no host: `HTTP_PORT`/`HTTPS_PORT` (padrão **80/443**). A aplicação (8080), o PostgreSQL (5432)
+e o Ollama opcional (11434) ficam apenas na rede interna `exegese-net`, sem `ports:`.
+
+> [!WARNING]
+> Portas publicadas pelo Docker **ignoram o UFW** (as regras iptables do Docker são avaliadas antes). Não adicione `ports:`
+> ao `postgres` nem ao `ollama`; se precisar acessar o banco, use `docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"`
+> ou um túnel SSH. Confira com `sudo ss -tlnp` no host (e um `nmap` externo) que só 80/443 estão abertas, e feche 5432 e 11434
+> também no *security group* / lista de segurança da nuvem.
+
+### 3.4. Ollama Local (Opcional)
+O Ollama não tem autenticação, por isso **não publica porta**: a aplicação o acessa como `http://ollama:11434` na rede interna.
+Suba-o junto com os demais serviços usando um dos overrides:
+```bash
+# CPU
+docker compose -f docker-compose.yml -f docker-compose.override.ai.yml up -d
+# GPU NVIDIA (requer o NVIDIA Container Toolkit)
+docker compose -f docker-compose.yml -f docker-compose.override.ai-with-gpu.yml up -d
+```
+O `ollama_init.sh` aguarda o servidor e baixa `OLLAMA_CHAT_MODEL` (padrão `llama3.2`). Depois, selecione o provedor
+**Ollama Local** em `/admin/models`. Use sempre os mesmos `-f` nos comandos seguintes (`ps`, `logs`, `down`).
+
+### 3.5. Hardening dos Contêineres
+- **Imagens fixadas**: `pgvector/pgvector:0.8.7-pg17`, `linuxserver/swag:5.8.0`, `ollama/ollama:0.40.1`, `eclipse-temurin:25-jdk-noble`/`25-jre-noble`
+  (o Dependabot propõe atualizações semanais dos Dockerfiles).
+- **Aplicação**: imagem em camadas do Spring Boot (dependências separadas do código), usuário não-root `10001`, `ENTRYPOINT` sem shell
+  e opções da JVM em `JAVA_TOOL_OPTIONS` (ZGC, `-XX:MaxRAMPercentage=75`, `-XX:+ExitOnOutOfMemoryError`). No compose: `read_only: true`
+  com tmpfs em `/tmp` (256 MB), `cap_drop: [ALL]`, `no-new-privileges`, `mem_limit` (`APP_MEM_LIMIT`, padrão 2g), `cpus` (`APP_CPUS`,
+  padrão 2) e `pids_limit`. Só os volumes `upload_data` (`/app/uploads`) e `storage_data` (`/app/storage`) são graváveis.
+- **Proxy**: `cap_add: NET_ADMIN` existe apenas para o **fail2ban** do SWAG (bloqueio por iptables); remova-o se não usar o fail2ban.
+  A configuração do site (`docker/proxy/config/default`) é montada como `/config/nginx/site-confs/default.conf` (o SWAG só carrega `*.conf`).
+- **Keystore de desenvolvimento**: `src/main/resources/cert.p12` é só para rodar no Eclipse; fica fora do JAR (`maven-jar-plugin`) e do
+  contexto Docker (`.dockerignore`). Em produção o TLS termina no SWAG.
+
+### 3.6. Atualização de Instalações Existentes
+Instalações feitas antes desta versão usavam uma chave AES fixa no código, uma senha pública do PostgreSQL e publicavam as portas
+5432 (PostgreSQL) e 11434 (Ollama) em todas as interfaces. **Considere expostos os segredos dessas instalações** e siga, em ordem:
+
+1. **Rotacione as credenciais externas**: gere novas chaves de API de todos os provedores de LLM usados (Gemini, OpenAI, Anthropic,
+   Cerebras, NVIDIA, DeepSeek) e um novo *client secret* do Google OAuth2 no Google Cloud Console. Revogue as antigas.
+2. **Feche as portas 5432 e 11434** no firewall do host e no *security group* / lista de segurança da nuvem. O novo `docker-compose.yml`
+   já não as publica, mas a regra de nuvem antiga deve ser removida. Confira com `sudo ss -tlnp` e um `nmap` externo: só 80/443.
+3. **Atualize o código e reaproveite o `.env`**: `git pull` e `./install.sh`. Mantendo o `.env` atual ou reconfigurando-o, o instalador **preserva**
+   `POSTGRES_USER`, `POSTGRES_PASSWORD` e `EXEGESE_AES_SECRET` já gravados (o volume `pgdata` não aceita novas credenciais),
+   completa o que faltar e exige `INITIAL_ADMIN_EMAIL` (o antigo padrão `admin@exegese.ai` é recusado).
+4. **Defina `EXEGESE_AES_SECRET`** (Base64 de 32 bytes: `openssl rand -base64 32`) se o `.env` ainda não tiver um valor válido. A aplicação
+   não sobe sem ela. Na inicialização, as chaves de API cifradas com a antiga chave fixa são **migradas automaticamente** para a nova
+   chave (formato `v1:`); o log lista apenas os provedores migrados. Guarde essa chave com backup: sem ela, as chaves de API salvas no
+   banco ficam ilegíveis.
+5. **Troque a senha do PostgreSQL** (o volume já inicializado mantém a senha antiga) e atualize o `.env`:
+   ```bash
+   NEW_PASS=$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32)
+   docker compose exec postgres psql -U "$POSTGRES_USER" -d "${POSTGRES_DB:-exegese_db}" \
+     -c "ALTER USER \"$POSTGRES_USER\" WITH PASSWORD '$NEW_PASS';"
+   sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$NEW_PASS/" .env
+   docker compose up -d    # recria a aplicação com a nova senha
+   ```
+   (carregue as variáveis antes com `set -a; . ./.env; set +a`).
+6. **Cadastre as novas chaves de API** em `/admin/models` (ou no `.env`) e use **Ping** para validá-las.
+7. **Reindexe os embeddings**: com a `GEMINI_API_KEY` configurada, abra `/admin/documents` e clique em **Reindexar embeddings**. Os documentos
+   indexados antes desta versão têm vetores zerados ou nulos; a reindexação recalcula os vetores (`gemini-embedding-001`, 768 dimensões)
+   a partir do texto já gravado, sem reenviar os PDFs.
+
+O esquema do banco é migrado automaticamente pelo Flyway na primeira inicialização (baseline na versão 1 e migrações V2+ idempotentes).
+O relatório completo da auditoria está em [`docs/SEGURANCA_AUDITORIA_2026-10.md`](docs/SEGURANCA_AUDITORIA_2026-10.md).
+
 ---
 
 ## 4. Comandos e Flags do Script `install.sh`
@@ -235,16 +302,40 @@ O script `install.sh` calcula e exibe essa URL exata ao final da execução.
 
 ## 6. Execução em Desenvolvimento Local
 
-Para executar o projeto diretamente na máquina host com Maven e Java 25 nativo:
+Para executar o projeto diretamente na máquina host com Java 25 e o Maven Wrapper (`./mvnw`, que baixa o Maven 3.9.11 e confere o SHA-256):
 
 ### 6.1. Subir apenas o Banco de Dados (PostgreSQL + pgvector)
+O `postgres` do `docker-compose.yml` principal não publica a porta 5432. Em desenvolvimento, use o compose avulso do banco,
+que publica a porta **somente em `127.0.0.1`**:
 ```bash
-docker compose up -d postgres
+cd docker/postgres
+printf 'POSTGRES_USER=exegese_dev\nPOSTGRES_PASSWORD=%s\n' "$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32)" > .env
+docker compose up -d --build
 ```
 
-### 6.2. Executar a Aplicação Spring Boot
+### 6.2. Perfis e Execução da Aplicação Spring Boot
+- **`prod`**: perfil padrão no Docker (`SPRING_PROFILES_ACTIVE=prod`, definido no `Dockerfile` e no `docker-compose.yml`;
+  arquivo `application-prod.properties`). O `application.properties` já tem padrões seguros para produção (cache do Thymeleaf,
+  logs em INFO, cookie de sessão `Secure`/`HttpOnly`/`SameSite=Lax`, esquema só via Flyway).
+- **`dev`**: perfil local, com um `src/main/resources/application-dev.properties` **não versionado** (crie o seu). Exemplo para o Eclipse,
+  usando o keystore de desenvolvimento `src/main/resources/cert.p12` (só para dev: fica fora do JAR e da imagem Docker):
+  ```properties
+  server.ssl.enabled=true
+  server.ssl.key-store=classpath:cert.p12
+  server.ssl.key-store-type=PKCS12
+  server.ssl.key-store-password=<senha do seu cert.p12>
+  spring.thymeleaf.cache=false
+  logging.level.br.org.rivelino.exegese_ai=DEBUG
+  # Só se servir http://localhost sem TLS:
+  # server.servlet.session.cookie.secure=false
+  ```
+
+Defina as variáveis obrigatórias no ambiente (ou na configuração de execução do Eclipse) e rode:
 ```bash
-mvn spring-boot:run
+export POSTGRES_USER=exegese_dev POSTGRES_PASSWORD='<senha do docker/postgres/.env>'
+export EXEGESE_AES_SECRET="$(openssl rand -base64 32)"   # guarde-a: ela cifra as chaves de API salvas no banco
+export INITIAL_ADMIN_EMAIL=voce@seu-dominio.com.br GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=...
+SPRING_PROFILES_ACTIVE=dev ./mvnw spring-boot:run
 ```
 
 A aplicação subirá na porta `8080`.
@@ -262,11 +353,23 @@ cd src/main/frontend && npm ci && npm run build:css
 
 ## 7. Suíte de Testes Automatizados
 
-O projeto conta com **59 testes automatizados** sob **Spring Boot 4.1.1** e **Java 25 Nativo** (`major version 69`), com 100% de taxa de aprovação:
+A suíte roda sob **Spring Boot 4.1.1** e **Java 25** com H2 (perfil `test`) e, quando há Docker disponível, com
+**Testcontainers** (`pgvector/pgvector:0.8.7-pg17`) para Flyway, pgvector e busca textual (FTS). Nenhum teste chama APIs externas:
+o cliente de LLM e o modelo de embeddings são substituídos por dublês determinísticos.
 
 ```bash
-mvn clean test
+./mvnw -B verify
 ```
+
+Os testes Testcontainers (`FlywayMigrationContainerTest`, `PgVectorHybridSearchContainerTest`) usam
+`@Testcontainers(disabledWithoutDocker = true)`: sem daemon Docker eles são ignorados; no CI eles rodam.
+
+### Integração Contínua (GitHub Actions)
+O workflow `.github/workflows/ci.yml` roda em todo push e pull request, com `permissions: contents: read`:
+- **build**: `./mvnw -B verify` no JDK 25 (Temurin), incluindo os testes Testcontainers.
+- **frontend**: `npm ci && npm run build:css` em `src/main/frontend` e falha se o `tailwind.css` versionado estiver desatualizado.
+- **docker**: `docker compose config` dos arquivos compose (com variáveis fictícias), build da imagem da aplicação (sem push),
+  verificação de usuário não-root e ausência de keystores na imagem, e build da imagem do proxy.
 
 ### Suítes de Teste Implementadas:
 - `AppConfigIntegrationTest` (2 testes): Validação do carregamento de propriedades customizadas e sobrescrita de parâmetros a partir do arquivo externo `app_config`.
@@ -293,7 +396,7 @@ mvn clean test
 | `SERVER_NAME` | `exegese-ai.sytes.net` | FQDN ou nome de host do servidor (para SSL e cabeçalhos NGINX). |
 | `HTTP_PORT` | `80` | Porta pública HTTP exposta pelo contêiner SWAG. |
 | `HTTPS_PORT` | `443` | Porta pública HTTPS exposta pelo contêiner SWAG. |
-| `LETSENCRYPT_EMAIL` | `admin@exegese.ai` | E-mail para cadastro e alertas de expiração do Let's Encrypt. |
+| `LETSENCRYPT_EMAIL` | - | E-mail para cadastro e alertas de expiração do Let's Encrypt (o `install.sh` sugere `admin@<host>`). Vazio = o SWAG registra a conta sem e-mail. |
 | `LETSENCRYPT_STAGING` | `false` | Se `true`, utiliza o ambiente de staging do Let's Encrypt (para testes). |
 | `VALIDATION` | `http` | Método de validação ACME do Certbot no SWAG (`http`, `dns`, `duckdns`). |
 | `POSTGRES_DB` | `exegese_db` | Nome do banco de dados relacional. |
@@ -301,7 +404,7 @@ mvn clean test
 | `POSTGRES_PASSWORD` | *(gerada: 32 caracteres alfanuméricos)* | Senha do banco PostgreSQL. **Obrigatória**; gerada pelo `install.sh` e preservada na reconfiguração. O banco não é publicado no host (só a rede interna `exegese-net`). |
 | `PORT` | `8080` | Porta interna da aplicação web (isolada na rede Docker). |
 | `EXEGESE_AES_SECRET` | *(gerada: `openssl rand -base64 32`)* | Chave mestra AES-256-GCM das chaves de API gravadas no banco: Base64 de exatamente 32 bytes. **Obrigatória** (a aplicação não sobe sem ela); mantenha-a estável e com backup. Para rodar no Eclipse/IDE, defina-a como variável de ambiente. |
-| `INITIAL_ADMIN_EMAIL` | - | E-mail Google promovido a Administrador no login **somente enquanto não existir nenhum `ROLE_ADMIN`**. Sem valor padrão: se ficar vazio, a aplicação registra um aviso e ninguém é promovido automaticamente. |
+| `INITIAL_ADMIN_EMAIL` | - | **Obrigatório na instalação** (o `install.sh` exige e recusa o antigo `admin@exegese.ai`). E-mail Google promovido a Administrador no login **somente enquanto não existir nenhum `ROLE_ADMIN`** e só com `email_verified=true`. Sem valor padrão: se ficar vazio, a aplicação registra um aviso e ninguém é promovido automaticamente. |
 | `ALLOWED_EMAIL_DOMAINS` | - | Domínios de e-mail Google autorizados a entrar (`exegese.security.allowed-email-domains`), separados por vírgula. Vazio = qualquer conta Google com e-mail verificado. Contas desativadas e e-mails não verificados são sempre recusados. |
 | `GOOGLE_CLIENT_ID` | - | Client ID OAuth2 configurado no Google Cloud Console. |
 | `GOOGLE_CLIENT_SECRET` | - | Client Secret OAuth2 do Google Cloud Console. |
@@ -314,7 +417,13 @@ mvn clean test
 | `DEEPSEEK_API_KEY` | - | Chave de API para DeepSeek AI. |
 | `OLLAMA_BASE_URL` | `http://ollama:11434` | Endpoint do Ollama local (overrides `docker-compose.override.ai*.yml`), acessível só pela rede interna. |
 | `OLLAMA_CHAT_MODEL` | `llama3.2` | Modelo de chat baixado pelo `ollama_init.sh` e usado como padrão do provedor Ollama Local. |
+| `SPRING_PROFILES_ACTIVE` | `prod` (Docker) | Perfil Spring. No Docker é sempre `prod`; em desenvolvimento use `dev` (ver seção 6.2). |
+| `APP_MEM_LIMIT` | `2g` | Limite de memória do contêiner `app` (`mem_limit`). O heap da JVM usa 75% dele (`-XX:MaxRAMPercentage=75`) e o tmpfs `/tmp` (256 MB) também conta nesse limite. |
+| `APP_CPUS` | `2` | Limite de CPUs do contêiner `app`. |
 | `UPLOAD_DIR` | `./uploads` | Diretório onde os PDFs originais enviados são guardados como `<sha256>.pdf` (no Docker: volume `upload_data` em `/app/uploads`). A indexação roda em segundo plano e o catálogo mostra o status (`PROCESSING`, `INDEXED`, `FAILED`). |
+
+Propriedades de segurança relacionadas: `exegese.security.allowed-email-domains` (variável `ALLOWED_EMAIL_DOMAINS`),
+`exegese.security.crypto-key` (variável `EXEGESE_AES_SECRET`) e `exegese.llm.allowed-hosts` (variável `LLM_ALLOWED_HOSTS`).
 
 ### 8.1. Arquivo de Configuração Customizada (`app_config`)
 
