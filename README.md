@@ -19,12 +19,12 @@
   - *Português*: *"Essa informação não consta nos documentos dos assuntos selecionados."*
   - *Inglês*: *"This information is not found in the documents of the selected subjects."*
   - *Espanhol*: *"Esta información no consta en los documentos de los temas seleccionados."*
-- **Busca Híbrida de Alta Precisão (RRF)**: Combina indexação vetorial densa com índice HNSW (distância por cosseno) e busca lexical textual (*Full-Text Search* com `tsvector` e `tsquery` em português), fundindo os rankings através do algoritmo **Reciprocal Rank Fusion (RRF)** com sanitização de vetores nulos (*all-zeros guard*):
+- **Busca Híbrida de Alta Precisão (RRF)**: Combina indexação vetorial densa com índice HNSW (distância por cosseno) e busca lexical textual (*Full-Text Search* com `tsvector` e `tsquery` em português), fundindo os rankings através do algoritmo **Reciprocal Rank Fusion (RRF)** sem vetores nulos ou zerados (embeddings validados; sem chave Gemini a busca usa só texto completo):
   $$Score_{RRF} = \frac{1}{60 + rank_{vec}} + \frac{1}{60 + rank_{txt}}$$
 - **Arquitetura Multi-Provedor Dinâmica (7 Ecossistemas de IA)**: Roteamento transparente e em tempo de execução via `LlmProviderRouter` entre 7 ecossistemas de ponta:
-  - **Google Gemini** (`gemini-3.5-flash-lite`, `gemini-2.5-flash`, `gemini-2.5-pro`)
-  - **Anthropic Claude** (`claude-3-7-sonnet`, `claude-3-5-sonnet`)
-  - **OpenAI ChatGPT** (`gpt-4o`)
+  - **Google Gemini** (`gemini-3.5-flash-lite` padrão)
+  - **Anthropic Claude** (`claude-sonnet-5-5` padrão)
+  - **OpenAI ChatGPT** (`gpt-5-mini` padrão)
   - **Cerebras Inference** (`gpt-oss-120b` — inferência de ultrabaixa latência em hardware Wafer-Scale Engine)
   - **NVIDIA Nemotron** (`nvidia/nemotron-4-340b-instruct`, `llama-3.1-nemotron-70b`)
   - **DeepSeek AI** (`deepseek-chat`, `deepseek-reasoner` / V3 / R1)
@@ -296,7 +296,8 @@ mvn clean test
 | `ALLOWED_EMAIL_DOMAINS` | - | Domínios de e-mail Google autorizados a entrar (`exegese.security.allowed-email-domains`), separados por vírgula. Vazio = qualquer conta Google com e-mail verificado. Contas desativadas e e-mails não verificados são sempre recusados. |
 | `GOOGLE_CLIENT_ID` | - | Client ID OAuth2 configurado no Google Cloud Console. |
 | `GOOGLE_CLIENT_SECRET` | - | Client Secret OAuth2 do Google Cloud Console. |
-| `GEMINI_API_KEY` | - | Chave de API para o Google Gemini. |
+| `GEMINI_API_KEY` | - | Chave de API para o Google Gemini: chat e embeddings semânticos (`gemini-embedding-001`, 768 dimensões). Sem ela, a busca usa apenas texto completo e a ingestão de documentos falha. Após configurá-la, use **Reindexar embeddings** em `/admin/documents` para gerar os vetores dos documentos já indexados. |
+| `LLM_ALLOWED_HOSTS` | - | Hosts extras aceitos como URL base dos provedores de LLM (`exegese.llm.allowed-hosts`), separados por vírgula: `host` (todos os provedores) ou `PROVEDOR=host`. Por padrão, só os hosts oficiais (https); o Ollama local também aceita http para o host de `OLLAMA_BASE_URL`. |
 | `OPENAI_API_KEY` | - | Chave de API para a OpenAI. |
 | `ANTHROPIC_API_KEY` | - | Chave de API para o Anthropic Claude. |
 | `CEREBRAS_API_KEY` | - | Chave de API para o Cerebras Inference. |
@@ -345,7 +346,7 @@ A plataforma aplica estratégias customizadas de segmentação dependendo da tax
 [Segmentação Polimórfica (QA / Artigos / Geral)]
          │
          ▼
-[Geração de Embeddings Vetoriais (text-embedding-004)]
+[Geração de Embeddings Vetoriais (gemini-embedding-001, 768 dimensões)]
          │
          ▼
 [Indexação PostgreSQL + pgvector (HNSW) e Textual (GIN)]

@@ -27,6 +27,7 @@ import br.org.rivelino.exegese_ai.repository.ChatMessageRepository;
 import br.org.rivelino.exegese_ai.repository.ChatSessionRepository;
 import br.org.rivelino.exegese_ai.repository.ExegeseSubjectRepository;
 import br.org.rivelino.exegese_ai.security.SecurityContextFacade;
+import br.org.rivelino.exegese_ai.service.ChatCitationReader;
 import br.org.rivelino.exegese_ai.service.ChatSessionAccessService;
 import org.springframework.context.MessageSource;
 import org.springframework.context.i18n.LocaleContextHolder;
@@ -57,6 +58,7 @@ public class ChatViewController {
     private final ChatMessageRepository messageRepository;
     private final ExegeseSubjectRepository subjectRepository;
     private final ChatSessionAccessService sessionAccessService;
+    private final ChatCitationReader citationReader;
     private final MessageSource messageSource;
 
     public ChatViewController(SecurityContextFacade securityContextFacade,
@@ -64,12 +66,14 @@ public class ChatViewController {
                               ChatMessageRepository messageRepository,
                               ExegeseSubjectRepository subjectRepository,
                               ChatSessionAccessService sessionAccessService,
+                              ChatCitationReader citationReader,
                               MessageSource messageSource) {
         this.securityContextFacade = securityContextFacade;
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.subjectRepository = subjectRepository;
         this.sessionAccessService = sessionAccessService;
+        this.citationReader = citationReader;
         this.messageSource = messageSource;
     }
 
@@ -146,6 +150,7 @@ public class ChatViewController {
         model.addAttribute("sessions", sessions);
         model.addAttribute("activeSession", activeSession);
         model.addAttribute("messages", messages);
+        model.addAttribute("citationsByMessageId", citationReader.byMessageId(messages));
         model.addAttribute("subjects", subjects);
         model.addAttribute("isAdmin", securityContextFacade.isAdmin());
         model.addAttribute("canAccessAdmin", securityContextFacade.isOperatorOrAdmin());

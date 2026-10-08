@@ -17,50 +17,30 @@
  *
  * This software uses third-party components, distributed accordingly to their own licenses.
  *******************************************************************************/
-package br.org.rivelino.exegese_ai.config;
+package br.org.rivelino.exegese_ai.service;
 
-import java.util.Collections;
-
-import org.springframework.ai.document.Document;
-import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.ai.embedding.EmbeddingRequest;
-import org.springframework.ai.embedding.EmbeddingResponse;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Primary;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.stereotype.Component;
 
 /**
- * Configuration for vector store and fallback embedding model.
+ * Seeds and migrates the AI provider configurations once the application context is fully started.
+ * Calling {@link LlmProviderRouter#bootstrapProviders()} through the Spring proxy (instead of from a
+ * {@code @PostConstruct} callback, where {@code @Transactional} is ignored) gives it a real transaction.
  *
  * @author Rivelino Patrício
  */
-@Configuration
-public class VectorStoreConfiguration {
+@Component
+public class LlmProviderBootstrapRunner implements ApplicationRunner {
 
-    @Bean
-    @Primary
-    @ConditionalOnMissingBean(EmbeddingModel.class) EmbeddingModel fallbackEmbeddingModel() {
-        return new EmbeddingModel() {
-            @Override
-            public EmbeddingResponse call(EmbeddingRequest request) {
-                return new EmbeddingResponse(Collections.emptyList());
-            }
+    private final LlmProviderRouter providerRouter;
 
-            @Override
-            public float[] embed(Document document) {
-                return new float[768];
-            }
+    public LlmProviderBootstrapRunner(LlmProviderRouter providerRouter) {
+        this.providerRouter = providerRouter;
+    }
 
-            @Override
-            public float[] embed(String text) {
-                return new float[768];
-            }
-
-            @Override
-            public int dimensions() {
-                return 768;
-            }
-        };
+    @Override
+    public void run(ApplicationArguments args) {
+        providerRouter.bootstrapProviders();
     }
 }

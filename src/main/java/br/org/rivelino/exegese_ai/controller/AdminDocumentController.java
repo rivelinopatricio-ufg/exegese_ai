@@ -23,6 +23,9 @@ import br.org.rivelino.exegese_ai.domain.dto.DocumentSummaryDTO;
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseSubject;
 import br.org.rivelino.exegese_ai.domain.enums.SegmentationStrategyType;
 import br.org.rivelino.exegese_ai.service.DocumentIngestionService;
+import br.org.rivelino.exegese_ai.service.EmbeddingException;
+import br.org.rivelino.exegese_ai.service.EmbeddingReindexService;
+import br.org.rivelino.exegese_ai.service.EmbeddingService;
 import br.org.rivelino.exegese_ai.service.ErrorReference;
 import br.org.rivelino.exegese_ai.service.SubjectCatalogService;
 import org.slf4j.Logger;
@@ -48,6 +51,7 @@ import java.util.UUID;
 
 /**
  * Administrative controller for viewing cataloged documents, statuses and uploading new normative files.
+ * It also starts the background embedding reindexing job (CSRF-protected POST) and shows its progress.
  *
  * @author Rivelino Patrício
  */
@@ -60,13 +64,19 @@ public class AdminDocumentController {
 
     private final SubjectCatalogService catalogService;
     private final DocumentIngestionService ingestionService;
+    private final EmbeddingReindexService reindexService;
+    private final EmbeddingService embeddingService;
     private final MessageSource messageSource;
 
     public AdminDocumentController(SubjectCatalogService catalogService,
                                    DocumentIngestionService ingestionService,
+                                   EmbeddingReindexService reindexService,
+                                   EmbeddingService embeddingService,
                                    MessageSource messageSource) {
         this.catalogService = catalogService;
         this.ingestionService = ingestionService;
+        this.reindexService = reindexService;
+        this.embeddingService = embeddingService;
         this.messageSource = messageSource;
     }
 
@@ -81,6 +91,8 @@ public class AdminDocumentController {
         model.addAttribute("subjects", subjects);
         model.addAttribute("selectedSubjectId", subjectId);
         model.addAttribute("selectedStatus", status);
+        model.addAttribute("reindexStatus", reindexService.status());
+        model.addAttribute("embeddingConfigured", embeddingService.isConfigured());
 
         return "admin/documents";
     }
@@ -105,6 +117,11 @@ public class AdminDocumentController {
             ingestionService.ingestDocument(docTitle, file.getOriginalFilename(), file.getInputStream(), subjectIds, strategy);
             String successMsg = messageSource.getMessage("admin.document.success.uploaded", new Object[]{docTitle}, userLocale);
             redirectAttributes.addFlashAttribute("successMessage", successMsg);
+        } catch (EmbeddingException e) {
+            String reference = ErrorReference.newReference();
+            log.error("Document ingestion failed: embeddings unavailable [ref={}]: {}", reference, e.getMessage());
+            String key = e.isNotConfigured() ? "admin.document.error.embedding_unavailable" : "admin.document.error.ingestion_failed";
+            redirectAttributes.addFlashAttribute("errorMessage", messageSource.getMessage(key, new Object[]{reference}, userLocale));
         } catch (IOException | RuntimeException e) {
             // The exception detail (SQL, paths, infrastructure) stays in the server log, linked by the reference
             String reference = ErrorReference.newReference();
@@ -113,6 +130,40 @@ public class AdminDocumentController {
             redirectAttributes.addFlashAttribute("errorMessage", errorMsg);
         }
 
+        return "redirect:/admin/documents";
+    }
+
+    /**
+     * Starts the background recomputation of chunk embeddings from the stored chunk text: chunks without a
+     * vector (or with a legacy zero vector), or every chunk when {@code forceAll} is set.
+     */
+    @PostMapping("/reindex-embeddings")
+    public String reindexEmbeddings(@RequestParam(value = "forceAll", defaultValue = "false") boolean forceAll,
+                                    Locale locale,
+                                    RedirectAttributes redirectAttributes) {
+        Locale userLocale = (locale != null) ? locale : LocaleContextHolder.getLocale();
+        EmbeddingReindexService.StartOutcome outcome;
+        try {
+            outcome = reindexService.start(forceAll);
+        } catch (RuntimeException e) {
+            String reference = ErrorReference.newReference();
+            log.error("Embedding reindex could not start [ref={}]", reference, e);
+            redirectAttributes.addFlashAttribute("errorMessage",
+                    messageSource.getMessage("admin.document.reindex.error", new Object[]{reference}, userLocale));
+            return "redirect:/admin/documents";
+        }
+
+        switch (outcome) {
+            case STARTED -> redirectAttributes.addFlashAttribute("successMessage", messageSource.getMessage(
+                    "admin.document.reindex.started",
+                    new Object[]{String.valueOf(reindexService.status().total())}, userLocale));
+            case ALREADY_RUNNING -> redirectAttributes.addFlashAttribute("errorMessage",
+                    messageSource.getMessage("admin.document.reindex.already_running", null, userLocale));
+            case NOT_CONFIGURED -> redirectAttributes.addFlashAttribute("errorMessage",
+                    messageSource.getMessage("admin.document.reindex.not_configured", null, userLocale));
+            case UNSUPPORTED_DATABASE -> redirectAttributes.addFlashAttribute("errorMessage",
+                    messageSource.getMessage("admin.document.reindex.unsupported", null, userLocale));
+        }
         return "redirect:/admin/documents";
     }
 

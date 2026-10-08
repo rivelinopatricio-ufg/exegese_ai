@@ -58,22 +58,13 @@
       <artifactId>spring-boot-starter-data-jpa</artifactId>
     </dependency>
 
-    <!-- Spring AI Core, Models & PGVector Store -->
+    <!-- Spring AI: Google GenAI (Gemini Developer API) text embedding model only, without auto-configuration
+         (the model is built by EmbeddingConfiguration so the app also starts without GEMINI_API_KEY).
+         Chat completions go through the application's own LlmClientService, and vector search uses the
+         application's own pgvector SQL, so no chat/vector-store starter is needed. -->
     <dependency>
       <groupId>org.springframework.ai</groupId>
-      <artifactId>spring-ai-starter-model-google-genai</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.ai</groupId>
-      <artifactId>spring-ai-starter-model-openai</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.ai</groupId>
-      <artifactId>spring-ai-starter-model-ollama</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.ai</groupId>
-      <artifactId>spring-ai-starter-vector-store-pgvector</artifactId>
+      <artifactId>spring-ai-google-genai-embedding</artifactId>
     </dependency>
 
     <!-- PostgreSQL Database & Driver -->
@@ -129,6 +120,11 @@
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>testcontainers-postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>

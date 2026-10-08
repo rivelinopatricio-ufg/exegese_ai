@@ -51,6 +51,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      # Optional extra hosts allowed as LLM base URLs ("host" or "PROVIDER=host", comma-separated)
+      LLM_ALLOWED_HOSTS: ${LLM_ALLOWED_HOSTS:-}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-llama3.2}
       # Base64 of 32 random bytes (openssl rand -base64 32); the app refuses to start without it

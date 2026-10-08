@@ -100,9 +100,13 @@
         <span>ℹ</span>
         <span>Provedor padrão do sistema alterado com sucesso!</span>
     </div>
+    <div th:if="${errorMessage}" class="mb-6 p-4 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 rounded-xl text-xs font-medium flex items-center gap-2 shadow-sm">
+        <span>⚠</span>
+        <span th:text="${errorMessage}">Erro</span>
+    </div>
     <div th:if="${pingResult}" class="mb-6 p-4 bg-indigo-50 dark:bg-indigo-950/80 border border-indigo-300 dark:border-indigo-800 text-indigo-800 dark:text-indigo-300 rounded-xl text-xs font-medium flex items-center gap-2 shadow-sm">
         <span>⚡</span>
-        <div><span class="font-bold">Resultado do Teste:</span> <span th:text="${pingResult}"></span></div>
+        <div><span class="font-bold" th:text="#{admin.model.ping.title}">Resultado do Teste:</span> <span th:text="${pingResult}"></span></div>
     </div>
 
     <!-- Section Title -->

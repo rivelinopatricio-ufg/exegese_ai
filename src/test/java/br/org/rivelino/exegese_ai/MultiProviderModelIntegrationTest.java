@@ -90,7 +90,7 @@ class MultiProviderModelIntegrationTest {
         providerRouter.updateConfig(
                 ModelProvider.CLAUDE,
                 "Anthropic Claude",
-                "claude-3-7-sonnet",
+                "claude-sonnet-5-5",
                 "https://api.anthropic.com",
                 secretKey,
                 new BigDecimal("0.10"),

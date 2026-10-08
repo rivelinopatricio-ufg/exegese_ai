@@ -182,6 +182,9 @@ class HybridSearchIntegrationTest {
         assertThat(results).isNotEmpty();
         assertThat(results.get(0).chunkTitle()).contains("Criptoativos e Bitcoin");
         assertThat(results.get(0).score()).isGreaterThan(0.0);
+        // Grounding evidence travels with the result: lexical score here (no vector column outside PostgreSQL)
+        assertThat(results.get(0).lexicalScore()).isGreaterThan(0.0);
+        assertThat(results.get(0).vectorSimilarity()).isNull();
     }
 
     @Test

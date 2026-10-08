@@ -109,6 +109,7 @@
 
     <!-- Main Grid -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div class="space-y-8 h-fit">
         <!-- Formulário de Upload de Documento -->
         <div class="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-xl border border-slate-200 dark:border-slate-700 h-fit transition-colors">
             <div class="mb-5 pb-3 border-b border-slate-200 dark:border-slate-700/80">
@@ -153,6 +154,30 @@
                     <span>⬆️</span> <span th:text="#{admin.document.upload.submit}">Fazer Upload e Indexar RAG</span>
                 </button>
             </form>
+        </div>
+
+        <!-- Reindexação de Embeddings -->
+        <div class="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-xl border border-slate-200 dark:border-slate-700 h-fit transition-colors">
+            <div class="mb-4 pb-3 border-b border-slate-200 dark:border-slate-700/80">
+                <h2 class="text-lg font-bold text-slate-900 dark:text-white" th:text="#{admin.document.reindex.title}">Reindexar embeddings</h2>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5" th:text="#{admin.document.reindex.subtitle}">Recalcula os vetores semânticos a partir do texto já indexado</p>
+            </div>
+            <p th:unless="${embeddingConfigured}" class="mb-3 text-xs text-amber-700 dark:text-amber-300" th:text="#{admin.document.reindex.not_configured}">Embeddings indisponíveis.</p>
+            <div th:if="${reindexStatus != null and reindexStatus.state.name() != 'IDLE'}" class="mb-3 text-xs text-slate-700 dark:text-slate-300" id="reindexStatus">
+                <span class="font-semibold" th:text="#{${'admin.document.reindex.state.' + reindexStatus.state.name().toLowerCase()}}">Em andamento</span>
+                <span th:text="#{admin.document.reindex.progress(${reindexStatus.processed}, ${reindexStatus.total}, ${reindexStatus.failed})}">0 / 0</span>
+                <span th:if="${reindexStatus.errorReference != null}" th:text="#{admin.document.reindex.error(${reindexStatus.errorReference})}"></span>
+            </div>
+            <form th:action="@{/admin/documents/reindex-embeddings}" method="post" class="space-y-3">
+                <label class="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300">
+                    <input type="checkbox" name="forceAll" value="true" class="rounded border-slate-300 text-sky-600 focus:ring-sky-500">
+                    <span th:text="#{admin.document.reindex.force_all}">Recalcular todos os trechos</span>
+                </label>
+                <button type="submit" th:disabled="${reindexStatus != null and reindexStatus.running()}"
+                        class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium rounded-lg text-sm transition shadow-md"
+                        th:text="#{admin.document.reindex.submit}">Reindexar embeddings</button>
+            </form>
+        </div>
         </div>
 
         <!-- Tabela de Documentos -->

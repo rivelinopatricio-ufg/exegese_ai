@@ -24,9 +24,15 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.OptionalDouble;
 
 /**
  * Guard service implementing the Zero Hallucination policy by enforcing evidence threshold validation.
+ * <p>
+ * The retrieved context is considered grounded only when at least one candidate carries real evidence:
+ * a vector match whose cosine similarity reaches {@code exegese.similarity-threshold}, a full-text match
+ * containing every query term, or a lexical term-overlap score of at least {@code exegese.min-lexical-score}.
+ * The fused RRF score alone is never evidence: it is positive for any candidate, however weak.
  *
  * @author Rivelino Patrício
  */
@@ -36,9 +42,12 @@ public class AntiHallucinationGuard {
     public static final String CANONICAL_REFUSAL_MESSAGE = "Essa informação não consta nos documentos dos assuntos selecionados.";
 
     private final double similarityThreshold;
+    private final double minLexicalScore;
 
-    public AntiHallucinationGuard(@Value("${exegese.similarity-threshold:0.65}") double similarityThreshold) {
+    public AntiHallucinationGuard(@Value("${exegese.similarity-threshold:0.65}") double similarityThreshold,
+                                  @Value("${exegese.min-lexical-score:4.0}") double minLexicalScore) {
         this.similarityThreshold = similarityThreshold;
+        this.minLexicalScore = minLexicalScore;
     }
 
     /**
@@ -51,10 +60,32 @@ public class AntiHallucinationGuard {
         if (candidates == null || candidates.isEmpty()) {
             return false;
         }
+        return candidates.stream().anyMatch(this::hasEvidence);
+    }
 
-        // Must have at least one candidate with positive retrieval score
-        double topScore = candidates.get(0).score();
-        return topScore > 0.0;
+    private boolean hasEvidence(SearchResultChunk candidate) {
+        Double similarity = candidate.vectorSimilarity();
+        if (similarity != null && !similarity.isNaN() && similarity >= similarityThreshold) {
+            return true;
+        }
+        return candidate.fullTextMatch() || candidate.lexicalScore() >= minLexicalScore;
+    }
+
+    /**
+     * Highest vector similarity among the candidates, for diagnostics.
+     *
+     * @param candidates Retrieved search result chunks
+     * @return The best cosine similarity, or empty when no candidate came from vector search
+     */
+    public OptionalDouble bestSimilarity(List<SearchResultChunk> candidates) {
+        if (candidates == null) {
+            return OptionalDouble.empty();
+        }
+        return candidates.stream()
+                .map(SearchResultChunk::vectorSimilarity)
+                .filter(s -> s != null && !s.isNaN())
+                .mapToDouble(Double::doubleValue)
+                .max();
     }
 
     public String getRefusalMessage() {
@@ -63,5 +94,9 @@ public class AntiHallucinationGuard {
 
     public double getSimilarityThreshold() {
         return similarityThreshold;
+    }
+
+    public double getMinLexicalScore() {
+        return minLexicalScore;
     }
 }

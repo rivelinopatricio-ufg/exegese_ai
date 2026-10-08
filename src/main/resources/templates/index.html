@@ -204,9 +204,9 @@
                          class="rounded-2xl p-4 max-w-2xl text-sm shadow-md transition-colors">
                         <div class="font-semibold text-xs mb-1 opacity-70" th:text="${msg.role == 'USER'} ? #{chat.role.user} : 'Exegese AI'"></div>
                         <div class="whitespace-pre-wrap leading-relaxed" th:text="${msg.content}">Conteúdo</div>
-                        <div th:if="${msg.parsedCitations != null and !msg.parsedCitations.isEmpty()}" class="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700/60 flex flex-wrap gap-2">
+                        <div th:if="${citationsByMessageId.containsKey(msg.id)}" class="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700/60 flex flex-wrap gap-2">
                             <span class="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 w-full" th:text="#{chat.citations.title}">Fontes Oficiais:</span>
-                            <button th:each="cit : ${msg.parsedCitations}"
+                            <button th:each="cit : ${citationsByMessageId.get(msg.id)}"
                                     type="button"
                                     class="citation-chip"
                                     th:text="'📜 ' + ${(cit.chunkTitle != null and !cit.chunkTitle.isBlank()) ? cit.chunkTitle : cit.documentTitle}"

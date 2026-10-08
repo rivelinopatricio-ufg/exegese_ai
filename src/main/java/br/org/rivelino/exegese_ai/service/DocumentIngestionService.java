@@ -29,27 +29,34 @@ import br.org.rivelino.exegese_ai.repository.ExegeseDocumentRepository;
 import br.org.rivelino.exegese_ai.repository.ExegeseSubjectRepository;
 import br.org.rivelino.exegese_ai.service.segmentation.SegmentationStrategy;
 import br.org.rivelino.exegese_ai.service.segmentation.SegmentationStrategyFactory;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 
 import javax.sql.DataSource;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
  * Service orchestrating high-fidelity document ingestion, extraction, chunking, and idempotent indexing.
+ * <p>
+ * Embeddings for all new chunks are computed before any chunk is written. When they cannot be produced
+ * (no Gemini key, provider failure, wrong dimension) the document is kept with status {@code FAILED} and an
+ * {@link EmbeddingException} is raised; the transaction is not rolled back for that exception so the
+ * status survives, and no chunk (and never a zero vector) is stored.
  *
  * @author Rivelino Patrício
  */
@@ -64,8 +71,8 @@ public class DocumentIngestionService {
     private final PdfTextExtractor pdfTextExtractor;
     private final SegmentationStrategyFactory strategyFactory;
     private final CryptoService cryptoService;
-    private final EmbeddingModel embeddingModel;
-    private final ObjectMapper objectMapper;
+    private final EmbeddingService embeddingService;
+    private final JsonMapper jsonMapper;
     private final JdbcTemplate jdbcTemplate;
     private final boolean isPostgres;
 
@@ -75,8 +82,8 @@ public class DocumentIngestionService {
                                   PdfTextExtractor pdfTextExtractor,
                                   SegmentationStrategyFactory strategyFactory,
                                   CryptoService cryptoService,
-                                  EmbeddingModel embeddingModel,
-                                  ObjectMapper objectMapper,
+                                  EmbeddingService embeddingService,
+                                  JsonMapper jsonMapper,
                                   JdbcTemplate jdbcTemplate,
                                   DataSource dataSource) {
         this.documentRepository = documentRepository;
@@ -85,8 +92,8 @@ public class DocumentIngestionService {
         this.pdfTextExtractor = pdfTextExtractor;
         this.strategyFactory = strategyFactory;
         this.cryptoService = cryptoService;
-        this.embeddingModel = embeddingModel;
-        this.objectMapper = objectMapper;
+        this.embeddingService = embeddingService;
+        this.jsonMapper = jsonMapper;
         this.jdbcTemplate = jdbcTemplate;
         this.isPostgres = checkPostgreSql(dataSource);
     }
@@ -101,8 +108,9 @@ public class DocumentIngestionService {
      * @param strategyType Desired chunking strategy
      * @return The persisted ExegeseDocument entity
      * @throws IOException If PDF reading or parsing fails
+     * @throws EmbeddingException If chunk embeddings cannot be generated (document kept as FAILED)
      */
-    @Transactional
+    @Transactional(noRollbackFor = EmbeddingException.class)
     public ExegeseDocument ingestDocument(String title,
                                           String fileName,
                                           InputStream inputStream,
@@ -122,8 +130,9 @@ public class DocumentIngestionService {
      * @param strategyType Desired chunking strategy
      * @return The persisted ExegeseDocument entity
      * @throws IOException If PDF reading or parsing fails
+     * @throws EmbeddingException If chunk embeddings cannot be generated (document kept as FAILED)
      */
-    @Transactional
+    @Transactional(noRollbackFor = EmbeddingException.class)
     public ExegeseDocument ingestDocument(String title,
                                           String fileName,
                                           byte[] fileBytes,
@@ -177,35 +186,36 @@ public class DocumentIngestionService {
 
         doc = documentRepository.saveAndFlush(doc);
 
+        SegmentationStrategy strategy = strategyFactory.getStrategy(effectiveStrategy);
+        List<RawChunk> rawChunks = strategy.segment(extractedPdf.fullText(), extractedPdf.pages());
+        log.info("Document '{}' segmented into {} raw chunks via strategy {}", title, rawChunks.size(), effectiveStrategy);
+
+        List<RawChunk> newChunks = selectNewChunks(rawChunks);
+        List<float[]> embeddings;
         try {
-            SegmentationStrategy strategy = strategyFactory.getStrategy(effectiveStrategy);
-            List<RawChunk> rawChunks = strategy.segment(extractedPdf.fullText(), extractedPdf.pages());
-            log.info("Document '{}' segmented into {} raw chunks via strategy {}", title, rawChunks.size(), effectiveStrategy);
+            // Every vector is produced (and validated) before the first chunk is written. Outside PostgreSQL
+            // they are not stored (no vector column), but computing them keeps the failure behavior identical.
+            embeddings = embeddingService.embedAll(newChunks.stream()
+                    .map(c -> EmbeddingService.chunkEmbeddingText(c.title(), c.content()))
+                    .toList());
+        } catch (EmbeddingException e) {
+            log.error("Embedding generation failed for document '{}': {}", title, e.getMessage());
+            doc.setStatus("FAILED");
+            doc.setErrorMessage(e.isNotConfigured()
+                    ? "Embedding provider not configured (GEMINI_API_KEY)"
+                    : "Embedding generation failed: " + e.getMessage());
+            documentRepository.saveAndFlush(doc);
+            throw e;
+        }
 
-            for (RawChunk rawChunk : rawChunks) {
-                Optional<ExegeseChunk> existingChunk = chunkRepository.findByChunkHashSha256(rawChunk.chunkHashSha256());
-                if (existingChunk.isPresent()) {
-                    continue;
-                }
-
+        try {
+            for (int i = 0; i < newChunks.size(); i++) {
+                RawChunk rawChunk = newChunks.get(i);
                 String metadataJson = serializeMetadata(rawChunk.metadata());
-
-                float[] embedding;
-                try {
-                    embedding = embeddingModel.embed(rawChunk.content());
-                } catch (RuntimeException e) {
-                    log.warn("Embedding generation failed for chunk {}: {}, falling back to zero vector",
-                            rawChunk.sequenceNumber(), e.getMessage());
-                    embedding = new float[768];
-                }
-
-                if (embedding == null || embedding.length != 768) {
-                    embedding = new float[768];
-                }
 
                 if (isPostgres) {
                     UUID chunkId = UUID.randomUUID();
-                    String vectorStr = formatVector(embedding);
+                    String vectorStr = EmbeddingService.toPgVector(embeddings.get(i));
                     jdbcTemplate.update("""
                         INSERT INTO exegese_chunk (id, document_id, chunk_hash_sha256, sequence_number, title, content, metadata, embedding, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, cast(? as vector), CURRENT_TIMESTAMP)
@@ -242,6 +252,23 @@ public class DocumentIngestionService {
         }
     }
 
+    /**
+     * Chunks to index: blank chunks, chunks whose hash already exists and repeated hashes inside the same
+     * document are skipped.
+     */
+    private List<RawChunk> selectNewChunks(List<RawChunk> rawChunks) {
+        Map<String, RawChunk> byHash = new LinkedHashMap<>();
+        for (RawChunk rawChunk : rawChunks) {
+            if (rawChunk.content() == null || rawChunk.content().isBlank()
+                    || byHash.containsKey(rawChunk.chunkHashSha256())
+                    || chunkRepository.findByChunkHashSha256(rawChunk.chunkHashSha256()).isPresent()) {
+                continue;
+            }
+            byHash.put(rawChunk.chunkHashSha256(), rawChunk);
+        }
+        return new ArrayList<>(byHash.values());
+    }
+
     private boolean checkPostgreSql(DataSource dataSource) {
         if (dataSource == null) {
             return false;
@@ -255,23 +282,11 @@ public class DocumentIngestionService {
         }
     }
 
-    private String formatVector(float[] vector) {
-        StringBuilder sb = new StringBuilder("[");
-        for (int i = 0; i < vector.length; i++) {
-            sb.append(vector[i]);
-            if (i < vector.length - 1) {
-                sb.append(",");
-            }
-        }
-        sb.append("]");
-        return sb.toString();
-    }
-
     private String serializeMetadata(Object metadata) {
         if (metadata == null) return "{}";
         try {
-            return objectMapper.writeValueAsString(metadata);
-        } catch (JsonProcessingException e) {
+            return jsonMapper.writeValueAsString(metadata);
+        } catch (JacksonException e) {
             log.warn("Failed to serialize chunk metadata to JSON: {}", e.getMessage());
             return "{}";
         }

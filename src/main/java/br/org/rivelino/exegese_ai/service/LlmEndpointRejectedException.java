@@ -17,32 +17,42 @@
  *
  * This software uses third-party components, distributed accordingly to their own licenses.
  *******************************************************************************/
-package br.org.rivelino.exegese_ai.domain.dto;
+package br.org.rivelino.exegese_ai.service;
 
-import java.util.UUID;
+import br.org.rivelino.exegese_ai.domain.enums.ModelProvider;
 
 /**
- * Enriched search result chunk containing document metadata and Reciprocal Rank Fusion (RRF) scoring.
- * <p>
- * Besides the fused rank score it carries the retrieval evidence used by the anti-hallucination guard:
- * the cosine similarity of the vector match ({@code 1 - pgvector cosine distance}, null when the chunk was
- * not retrieved by vector search), the lexical relevance score of the term-overlap heuristic (0 when none)
- * and whether the chunk matched the full-text query with all its terms.
+ * Raised when the base URL configured for an LLM provider violates the endpoint policy (scheme other than
+ * https, host outside the provider allowlist, embedded credentials...). The rejected URL itself is not part
+ * of the message, which is an i18n key.
  *
  * @author Rivelino Patrício
  */
-public record SearchResultChunk(
-    UUID chunkId,
-    UUID documentId,
-    String documentTitle,
-    String chunkTitle,
-    String content,
-    int sequenceNumber,
-    String metadataJson,
-    double score,
-    int vectorRank,
-    int textRank,
-    Double vectorSimilarity,
-    double lexicalScore,
-    boolean fullTextMatch
-) {}
+public class LlmEndpointRejectedException extends RuntimeException {
+
+    public static final String MESSAGE_KEY = "admin.model.error.base_url_rejected";
+
+    private final ModelProvider provider;
+    private final String reason;
+
+    public LlmEndpointRejectedException(ModelProvider provider, String reason) {
+        super("Base URL rejected for provider " + provider + ": " + reason);
+        this.provider = provider;
+        this.reason = reason;
+    }
+
+    public ModelProvider getProvider() {
+        return provider;
+    }
+
+    /**
+     * @return Short technical reason (for logs), never containing the rejected URL
+     */
+    public String getReason() {
+        return reason;
+    }
+
+    public String getMessageKey() {
+        return MESSAGE_KEY;
+    }
+}

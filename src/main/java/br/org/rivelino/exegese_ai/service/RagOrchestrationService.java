@@ -24,14 +24,14 @@ import br.org.rivelino.exegese_ai.domain.dto.SearchResultChunk;
 import br.org.rivelino.exegese_ai.domain.entity.AiModelConfig;
 import br.org.rivelino.exegese_ai.domain.entity.ChatMessage;
 import br.org.rivelino.exegese_ai.repository.ChatMessageRepository;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.MessageSource;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -82,7 +82,7 @@ public class RagOrchestrationService {
     private final ChatSessionAccessService sessionAccessService;
     private final ChatMessageRepository messageRepository;
     private final ChatTranscriptService transcriptService;
-    private final ObjectMapper objectMapper;
+    private final JsonMapper objectMapper;
     private final MessageSource messageSource;
 
     public RagOrchestrationService(HybridSearchService hybridSearchService,
@@ -93,7 +93,7 @@ public class RagOrchestrationService {
                                    ChatSessionAccessService sessionAccessService,
                                    ChatMessageRepository messageRepository,
                                    ChatTranscriptService transcriptService,
-                                   ObjectMapper objectMapper,
+                                   JsonMapper objectMapper,
                                    MessageSource messageSource) {
         this.hybridSearchService = hybridSearchService;
         this.queryRewritingService = queryRewritingService;
@@ -164,6 +164,8 @@ public class RagOrchestrationService {
 
             // 4. Anti-Hallucination Guard Evaluation
             if (!antiHallucinationGuard.isGrounded(chunks)) {
+                log.debug("No grounded evidence for session {}: {} candidates, best vector similarity {}",
+                        sessionId, chunks.size(), antiHallucinationGuard.bestSimilarity(chunks));
                 String refusal = antiHallucinationGuard.getRefusalMessage();
                 emitToken(emitter, refusal);
                 emitComplete(emitter);
@@ -280,7 +282,7 @@ public class RagOrchestrationService {
         }
         try {
             return objectMapper.writeValueAsString(subjectIds);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             log.warn("Failed to serialize subjectIds to JSON: {}", e.getMessage());
             return null;
         }
@@ -344,9 +346,9 @@ public class RagOrchestrationService {
                     JsonNode node = objectMapper.readTree(chunk.metadataJson());
                     if (node.has("page")) page = node.get("page").asInt();
                     if (node.has("questionNumber")) questionNum = node.get("questionNumber").asInt();
-                    if (node.has("articleNumber")) articleNum = node.get("articleNumber").asText();
-                    if (node.has("legalBasis")) legalBasis = node.get("legalBasis").asText();
-                } catch (@SuppressWarnings("unused") JsonProcessingException ignored) {}
+                    if (node.has("articleNumber")) articleNum = node.get("articleNumber").asString();
+                    if (node.has("legalBasis")) legalBasis = node.get("legalBasis").asString();
+                } catch (@SuppressWarnings("unused") JacksonException ignored) {}
             }
 
             list.add(new CanonicalCitationDTO(

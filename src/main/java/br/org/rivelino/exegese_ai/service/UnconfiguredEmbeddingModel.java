@@ -17,24 +17,40 @@
  *
  * This software uses third-party components, distributed accordingly to their own licenses.
  *******************************************************************************/
-package br.org.rivelino.exegese_ai.config;
+package br.org.rivelino.exegese_ai.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.embedding.EmbeddingRequest;
+import org.springframework.ai.embedding.EmbeddingResponse;
 
 /**
- * Configuration for Jackson ObjectMapper bean.
+ * Placeholder {@link EmbeddingModel} registered when no Gemini API key is configured. Every call fails
+ * fast with {@link EmbeddingException#notConfigured()}: hybrid search then degrades to full-text retrieval
+ * and document ingestion is marked as failed. It never produces (zero) vectors.
  *
  * @author Rivelino Patrício
  */
-@Configuration
-public class JacksonConfiguration {
+public final class UnconfiguredEmbeddingModel implements EmbeddingModel {
 
-    @Bean
-    @ConditionalOnMissingBean(ObjectMapper.class)
-    public ObjectMapper objectMapper() {
-        return new ObjectMapper();
+    private final int dimensions;
+
+    public UnconfiguredEmbeddingModel(int dimensions) {
+        this.dimensions = dimensions;
+    }
+
+    @Override
+    public EmbeddingResponse call(EmbeddingRequest request) {
+        throw EmbeddingException.notConfigured();
+    }
+
+    @Override
+    public float[] embed(Document document) {
+        throw EmbeddingException.notConfigured();
+    }
+
+    @Override
+    public int dimensions() {
+        return dimensions;
     }
 }
