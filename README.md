@@ -243,7 +243,16 @@ Instalações feitas antes desta versão usavam uma chave AES fixa no código, u
 6. **Cadastre as novas chaves de API** em `/admin/models` (ou no `.env`) e use **Ping** para validá-las.
 7. **Reindexe os embeddings**: com a `GEMINI_API_KEY` configurada, abra `/admin/documents` e clique em **Reindexar embeddings**. Os documentos
    indexados antes desta versão têm vetores zerados ou nulos; a reindexação recalcula os vetores (`gemini-embedding-001`, 768 dimensões)
-   a partir do texto já gravado, sem reenviar os PDFs.
+   a partir do texto já gravado, sem reenviar os PDFs. Documentos que ficaram `FAILED` por erro de embedding (por exemplo,
+   HTTP 429 de cota do Gemini) podem ser reprocessados com o botão **Reprocessar**, sem novo upload.
+
+**Embeddings e cota do Gemini.** A ingestão indexa o documento para busca textual na hora (status `INDEXED`); os embeddings
+são gerados depois, em segundo plano, num ritmo limitado por `EMBEDDING_REQUESTS_PER_MINUTE` (padrão 90 textos/min) e
+`EMBEDDING_TOKENS_PER_MINUTE` (padrão 25 000 tokens/min, estimados como caracteres ÷ 4), pensados para a camada gratuita.
+Se o Gemini recusar por cota (HTTP 429), o job espera (o tempo sugerido pela API ou um backoff de até 5 min) e tenta o mesmo
+lote de novo; se a cota continuar esgotada por 30 min (típico do limite diário), ele pausa e retoma sozinho a cada 15 min.
+Nenhum documento falha por cota. O painel `/admin/documents` mostra o progresso por documento ("Busca semântica: X de Y
+trechos") e o estado do job. Em conta paga, aumente os dois limites no `.env` para acelerar.
 
 O esquema do banco é migrado automaticamente pelo Flyway na primeira inicialização (baseline na versão 1 e migrações V2+ idempotentes).
 O relatório completo da auditoria está em [`docs/SEGURANCA_AUDITORIA_2026-10.md`](docs/SEGURANCA_AUDITORIA_2026-10.md).
@@ -417,7 +426,10 @@ O workflow `.github/workflows/ci.yml` roda em todo push e pull request, com `per
 | `REQUIRE_HOSTED_DOMAIN` | `true` | Com `ALLOWED_EMAIL_DOMAINS` definido, exige que a conta Google seja gerenciada pelo próprio domínio no Google Workspace (claim `hd` igual ao domínio do e-mail), recusando contas Google pessoais que mantêm um endereço verificado da organização (`exegese.security.require-hosted-domain`). Use `false` apenas se o e-mail do domínio não estiver no Google Workspace. Independentemente disso, cada conta local fica vinculada ao identificador Google (`sub`) no primeiro login: outro `sub` com o mesmo e-mail é recusado (`account_identity_mismatch`). |
 | `GOOGLE_CLIENT_ID` | - | Client ID OAuth2 configurado no Google Cloud Console. |
 | `GOOGLE_CLIENT_SECRET` | - | Client Secret OAuth2 do Google Cloud Console. |
-| `GEMINI_API_KEY` | - | Chave de API para o Google Gemini: chat e embeddings semânticos (`gemini-embedding-001`, 768 dimensões). Sem ela, a busca usa apenas texto completo e a ingestão de documentos falha. Após configurá-la, use **Reindexar embeddings** em `/admin/documents` para gerar os vetores dos documentos já indexados. |
+| `GEMINI_API_KEY` | - | Chave de API para o Google Gemini: chat e embeddings semânticos (`gemini-embedding-001`, 768 dimensões). Sem ela, a busca usa apenas texto completo; os documentos continuam sendo indexados e os embeddings pendentes são gerados automaticamente depois que a chave for configurada. |
+| `EMBEDDING_REQUESTS_PER_MINUTE` | `90` | Textos enviados por minuto pelo job de embeddings (ingestão e reindexação). Aumente em conta paga do Gemini. |
+| `EMBEDDING_TOKENS_PER_MINUTE` | `25000` | Tokens estimados (caracteres ÷ 4) enviados por minuto pelo job de embeddings. |
+| `EMBEDDING_BATCH_SIZE` | `16` | Trechos por requisição de embedding. |
 | `LLM_ALLOWED_HOSTS` | - | Hosts extras aceitos como URL base dos provedores de LLM (`exegese.llm.allowed-hosts`), separados por vírgula: `host` (todos os provedores) ou `PROVEDOR=host`. Por padrão, só os hosts oficiais (https); o Ollama local também aceita http para o host de `OLLAMA_BASE_URL`. |
 | `OPENAI_API_KEY` | - | Chave de API para a OpenAI. |
 | `ANTHROPIC_API_KEY` | - | Chave de API para o Anthropic Claude. |

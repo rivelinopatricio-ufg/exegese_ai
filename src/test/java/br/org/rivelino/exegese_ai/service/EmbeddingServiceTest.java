@@ -20,6 +20,7 @@
 package br.org.rivelino.exegese_ai.service;
 
 import br.org.rivelino.exegese_ai.config.TestEmbeddingModelConfiguration.FakeEmbeddingModel;
+import com.google.genai.errors.ClientException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.document.Document;
@@ -28,6 +29,7 @@ import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.embedding.EmbeddingRequest;
 import org.springframework.ai.embedding.EmbeddingResponse;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
@@ -136,6 +138,43 @@ class EmbeddingServiceTest {
                     assertThat(e.isNotConfigured()).isFalse();
                     assertThat(e.getMessage()).doesNotContain("secret").contains("IllegalStateException");
                 });
+    }
+
+    @Test
+    @DisplayName("HTTP 429 is flagged as a quota refusal with the provider's suggested wait, without its message")
+    void testQuotaRefusalFlagged() {
+        EmbeddingService service = new EmbeddingService(new ScriptedModel(text -> {
+            throw new ClientException(429, "RESOURCE_EXHAUSTED", "Quota exceeded for project secret-123. Please retry in 37.2s.");
+        }), 768, 32);
+
+        assertThatThrownBy(() -> service.embed("texto"))
+                .isInstanceOfSatisfying(EmbeddingException.class, e -> {
+                    assertThat(e.isRateLimited()).isTrue();
+                    assertThat(e.isNotConfigured()).isFalse();
+                    assertThat(e.retryAfter()).isEqualTo(Duration.ofMillis(37_200));
+                    assertThat(e.getMessage()).doesNotContain("secret").contains("HTTP 429");
+                });
+    }
+
+    @Test
+    @DisplayName("Other provider errors are not quota refusals")
+    void testOtherClientErrorNotRateLimited() {
+        EmbeddingService service = new EmbeddingService(new ScriptedModel(text -> {
+            throw new ClientException(400, "INVALID_ARGUMENT", "bad request");
+        }), 768, 32);
+
+        assertThatThrownBy(() -> service.embed("texto"))
+                .isInstanceOfSatisfying(EmbeddingException.class, e -> assertThat(e.isRateLimited()).isFalse());
+    }
+
+    @Test
+    @DisplayName("The suggested retry delay is parsed from both Gemini message formats and capped")
+    void testSuggestedRetryDelay() {
+        assertThat(EmbeddingService.suggestedRetryDelay("Please retry in 41.207164s.")).isEqualTo(Duration.ofMillis(41_208));
+        assertThat(EmbeddingService.suggestedRetryDelay("{\"retryDelay\": \"12s\"}")).isEqualTo(Duration.ofSeconds(12));
+        assertThat(EmbeddingService.suggestedRetryDelay("Please retry in 99999s")).isEqualTo(Duration.ofHours(1));
+        assertThat(EmbeddingService.suggestedRetryDelay("Resource has been exhausted")).isNull();
+        assertThat(EmbeddingService.suggestedRetryDelay(null)).isNull();
     }
 
     @Test

@@ -25,14 +25,18 @@ import br.org.rivelino.exegese_ai.repository.ChunkEmbeddingRepository.PendingChu
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import com.google.genai.errors.ClientException;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.embedding.EmbeddingRequest;
 import org.springframework.ai.embedding.EmbeddingResponse;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -47,21 +51,46 @@ import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for {@link EmbeddingReindexService}: batched keyset processing, validated vectors only,
- * failure accounting and the start preconditions. The job runs synchronously here.
+ * failure accounting, quota refusals (wait and retry, pause) and the start preconditions. The job runs
+ * synchronously here and quota waits are recorded instead of slept.
  *
  * @author Rivelino Patrício
  */
 class EmbeddingReindexServiceTest {
 
+    /** Quota policy in milliseconds so that waits are only recorded, never slept. */
+    private static final EmbeddingReindexService.QuotaPolicy QUOTA_POLICY = new EmbeddingReindexService.QuotaPolicy(
+            Duration.ofSeconds(15), Duration.ofMinutes(5), Duration.ofMinutes(30));
+
     private ChunkEmbeddingRepository repository;
     private FakeEmbeddingModel model;
     private EmbeddingReindexService service;
+    private final List<Duration> sleeps = new ArrayList<>();
+
+    private EmbeddingReindexService newService(EmbeddingService embeddingService, Executor executor) {
+        return new EmbeddingReindexService(repository, embeddingService, new EmbeddingRateLimiter(100_000, 10_000_000),
+                QUOTA_POLICY, executor, sleeps::add);
+    }
+
+    /** Embedding model refusing the first {@code refusals} calls with HTTP 429, then delegating to the fake. */
+    private static FakeEmbeddingModel quotaRefusing(int refusals, String providerMessage) {
+        AtomicInteger remaining = new AtomicInteger(refusals);
+        return new FakeEmbeddingModel(768) {
+            @Override
+            public EmbeddingResponse call(EmbeddingRequest request) {
+                if (remaining.getAndDecrement() > 0) {
+                    throw new ClientException(429, "RESOURCE_EXHAUSTED", providerMessage);
+                }
+                return super.call(request);
+            }
+        };
+    }
 
     @BeforeEach
     void setUp() {
         repository = mock(ChunkEmbeddingRepository.class);
         model = new FakeEmbeddingModel(768);
-        service = new EmbeddingReindexService(repository, new EmbeddingService(model, 768, 2), Runnable::run);
+        service = newService(new EmbeddingService(model, 768, 2), Runnable::run);
         when(repository.supportsVectors()).thenReturn(true);
     }
 
@@ -122,7 +151,7 @@ class EmbeddingReindexServiceTest {
                 throw new IllegalStateException("provider down");
             }
         }, 768, 1);
-        service = new EmbeddingReindexService(repository, failing, Runnable::run);
+        service = newService(failing, Runnable::run);
         when(repository.countChunks(false)).thenReturn(5L);
         when(repository.findBatch(anyBoolean(), any(), anyInt())).thenAnswer(invocation -> {
             UUID after = invocation.getArgument(1);
@@ -159,13 +188,12 @@ class EmbeddingReindexServiceTest {
         assertThat(service.start(false)).isEqualTo(EmbeddingReindexService.StartOutcome.UNSUPPORTED_DATABASE);
 
         when(repository.supportsVectors()).thenReturn(true);
-        EmbeddingReindexService unconfigured = new EmbeddingReindexService(repository,
+        EmbeddingReindexService unconfigured = newService(
                 new EmbeddingService(new UnconfiguredEmbeddingModel(768), 768, 32), Runnable::run);
         assertThat(unconfigured.start(false)).isEqualTo(EmbeddingReindexService.StartOutcome.NOT_CONFIGURED);
 
         List<Runnable> pending = new ArrayList<>();
-        EmbeddingReindexService deferred = new EmbeddingReindexService(repository,
-                new EmbeddingService(model, 768, 32), pending::add);
+        EmbeddingReindexService deferred = newService(new EmbeddingService(model, 768, 32), pending::add);
         when(repository.countChunks(false)).thenReturn(0L);
         assertThat(deferred.start(false)).isEqualTo(EmbeddingReindexService.StartOutcome.STARTED);
         assertThat(deferred.status().running()).isTrue();
@@ -175,5 +203,79 @@ class EmbeddingReindexServiceTest {
         pending.forEach(Runnable::run);
         assertThat(deferred.status().state()).isEqualTo(EmbeddingReindexService.State.COMPLETED);
         assertThat(deferred.start(false)).isEqualTo(EmbeddingReindexService.StartOutcome.STARTED);
+    }
+
+    @Test
+    @DisplayName("A quota refusal (HTTP 429) waits and retries the same batch instead of skipping it")
+    void testQuotaRefusalWaitsAndRetriesSameBatch() {
+        service = newService(new EmbeddingService(quotaRefusing(2, "Resource has been exhausted"), 768, 2), Runnable::run);
+        PendingChunk c1 = chunk(1, "dedução de despesas médicas");
+        PendingChunk c2 = chunk(2, "criptoativos na ficha de bens");
+        when(repository.countChunks(false)).thenReturn(2L);
+        when(repository.findBatch(false, new UUID(0L, 0L), 2)).thenReturn(List.of(c1, c2));
+        when(repository.findBatch(false, c2.id(), 2)).thenReturn(List.of());
+
+        service.start(false);
+
+        verify(repository, times(1)).updateEmbeddings(any());
+        assertThat(sleeps).containsExactly(Duration.ofSeconds(15), Duration.ofSeconds(30));
+        EmbeddingReindexService.ReindexStatus status = service.status();
+        assertThat(status.state()).isEqualTo(EmbeddingReindexService.State.COMPLETED);
+        assertThat(status.processed()).isEqualTo(2);
+        assertThat(status.failed()).isZero();
+        assertThat(status.waitingUntil()).isNull();
+    }
+
+    @Test
+    @DisplayName("The wait suggested by the provider in the 429 message is honored")
+    void testQuotaRefusalHonorsSuggestedDelay() {
+        service = newService(new EmbeddingService(
+                quotaRefusing(1, "Quota exceeded for metric. Please retry in 42.5s."), 768, 2), Runnable::run);
+        when(repository.countChunks(false)).thenReturn(1L);
+        when(repository.findBatch(eq(false), any(), anyInt())).thenReturn(List.of(chunk(1, "texto")), List.of());
+
+        service.start(false);
+
+        assertThat(sleeps).containsExactly(Duration.ofMillis(42_500));
+        assertThat(service.status().state()).isEqualTo(EmbeddingReindexService.State.COMPLETED);
+    }
+
+    @Test
+    @DisplayName("A quota that stays exhausted pauses the run: nothing fails, chunks stay pending for the resume")
+    void testPersistentQuotaPausesRun() {
+        service = newService(new EmbeddingService(quotaRefusing(Integer.MAX_VALUE, "exhausted"), 768, 2), Runnable::run);
+        when(repository.countChunks(false)).thenReturn(4L);
+        when(repository.findBatch(eq(false), any(), anyInt())).thenReturn(List.of(chunk(1, "a"), chunk(2, "b")));
+
+        service.start(false);
+
+        verify(repository, never()).updateEmbeddings(any());
+        EmbeddingReindexService.ReindexStatus status = service.status();
+        assertThat(status.state()).isEqualTo(EmbeddingReindexService.State.PAUSED_QUOTA);
+        assertThat(status.failed()).isZero();
+        assertThat(status.running()).isFalse();
+        Duration waited = sleeps.stream().reduce(Duration.ZERO, Duration::plus);
+        assertThat(waited).isLessThanOrEqualTo(QUOTA_POLICY.maxQuotaWait());
+        assertThat(sleeps).allSatisfy(d -> assertThat(d).isLessThanOrEqualTo(QUOTA_POLICY.maxBackoff()));
+        // Every wait retried the same (first) batch: the keyset never advanced
+        verify(repository, times(1)).findBatch(eq(false), any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("Chunks requested during a run get one follow-up pass")
+    void testRequestDuringRunQueuesFollowUpPass() {
+        List<Runnable> pending = new ArrayList<>();
+        service = newService(new EmbeddingService(model, 768, 2), pending::add);
+        when(repository.countChunks(false)).thenReturn(0L);
+        when(repository.findBatch(anyBoolean(), any(), anyInt())).thenReturn(List.of());
+
+        assertThat(service.requestPendingEmbeddings()).isEqualTo(EmbeddingReindexService.StartOutcome.STARTED);
+        assertThat(service.requestPendingEmbeddings()).isEqualTo(EmbeddingReindexService.StartOutcome.ALREADY_RUNNING);
+
+        pending.remove(0).run();
+        assertThat(pending).as("follow-up pass scheduled").hasSize(1);
+        pending.remove(0).run();
+        assertThat(pending).as("no further pass without a new request").isEmpty();
+        assertThat(service.status().state()).isEqualTo(EmbeddingReindexService.State.COMPLETED);
     }
 }

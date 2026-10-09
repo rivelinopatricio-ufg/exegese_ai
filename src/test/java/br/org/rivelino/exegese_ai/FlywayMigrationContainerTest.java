@@ -56,11 +56,13 @@ import org.testcontainers.utility.DockerImageName;
 import javax.sql.DataSource;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.awaitility.Awaitility.await;
 
 /**
  * PostgreSQL + pgvector integration tests (Testcontainers, skipped when Docker is unavailable) for the Flyway
@@ -126,11 +128,11 @@ class FlywayMigrationContainerTest {
         assertThat(second.getStatus()).isEqualTo("INDEXED");
         assertThat(chunkRepository.countByDocumentId(first.getId())).isEqualTo(2);
         assertThat(chunkRepository.countByDocumentId(second.getId())).isEqualTo(2);
-        Integer withVector = jdbcTemplate.queryForObject("""
+        // Vectors are computed by the background embedding job after each ingestion
+        await().atMost(Duration.ofSeconds(30)).until(() -> jdbcTemplate.queryForObject("""
                 SELECT count(*) FROM exegese_chunk
                 WHERE document_id IN (?, ?) AND embedding IS NOT NULL AND vector_norm(embedding) > 0
-                """, Integer.class, first.getId(), second.getId());
-        assertThat(withVector).isEqualTo(4);
+                """, Integer.class, first.getId(), second.getId()) == 4);
 
         List<SearchResultChunk> results = searchService.search("rendimentos isentos tributação imposto", List.of(), 4);
         assertThat(results).isNotEmpty();

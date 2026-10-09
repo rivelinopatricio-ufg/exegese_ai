@@ -66,14 +66,17 @@ import java.util.concurrent.RejectedExecutionException;
  *       and the document is saved with status {@code PROCESSING}. A document already {@code INDEXED} (same
  *       SHA-256) is reused; a {@code FAILED} one is reset and processed again.</li>
  *   <li><b>Processing</b> (background virtual thread for uploads, see {@link DocumentIngestionExecutor}): text
- *       extraction (page limit {@code exegese.ingestion.max-pages}), segmentation and embeddings run outside any
- *       database transaction; the chunks and the {@code INDEXED} status are then written in one short
- *       transaction.</li>
+ *       extraction (page limit {@code exegese.ingestion.max-pages}) and segmentation run outside any database
+ *       transaction; the chunks (without a vector) and the {@code INDEXED} status are then written in one short
+ *       transaction, so the document is searchable by full text at once.</li>
+ *   <li><b>Embeddings</b>: after the commit, {@link EmbeddingReindexService} computes the chunk vectors in the
+ *       background, paced below the provider quota; quota refusals (HTTP 429) make the job wait and resume
+ *       instead of failing the document. A missing provider key only delays semantic search.</li>
  * </ol>
  * When processing fails, the {@code FAILED} status and a generic error message (no SQL or exception detail;
  * those stay in the log, linked by an error reference) are written in a separate {@code REQUIRES_NEW}
- * transaction, so a rollback of the chunk transaction never erases them. Embeddings are computed and validated
- * before the first chunk is written, so no chunk (and never a zero vector) is stored for a failed document.
+ * transaction, so a rollback of the chunk transaction never erases them. A {@code FAILED} document whose PDF
+ * is stored can be processed again ({@link #reprocessDocument}). Zero vectors are never stored.
  * Chunk hashes are unique per document: the same text in two documents is indexed in both.
  *
  * @author Rivelino Patrício
@@ -87,11 +90,10 @@ public class DocumentIngestionService {
     public static final String STATUS_INDEXED = "INDEXED";
     public static final String STATUS_FAILED = "FAILED";
 
-    /** Generic error stored when the embedding provider has no credentials (operator-actionable, no detail). */
-    static final String ERROR_EMBEDDING_NOT_CONFIGURED = "Embedding provider not configured (GEMINI_API_KEY)";
     static final String ERROR_INTERRUPTED =
             "Processing was interrupted by an application shutdown; upload the file again";
     private static final int MAX_ERROR_MESSAGE_LENGTH = 500;
+    private static final int MAX_CHUNK_TITLE_LENGTH = 500;
 
     /**
      * How an upload was handled.
@@ -118,7 +120,7 @@ public class DocumentIngestionService {
     private final ExegeseSubjectRepository subjectRepository;
     private final PdfTextExtractor pdfTextExtractor;
     private final SegmentationStrategyFactory strategyFactory;
-    private final EmbeddingService embeddingService;
+    private final EmbeddingReindexService embeddingReindexService;
     private final DocumentStorageService storageService;
     private final DocumentIngestionExecutor ingestionExecutor;
     private final JsonMapper jsonMapper;
@@ -132,7 +134,7 @@ public class DocumentIngestionService {
                                   ExegeseSubjectRepository subjectRepository,
                                   PdfTextExtractor pdfTextExtractor,
                                   SegmentationStrategyFactory strategyFactory,
-                                  EmbeddingService embeddingService,
+                                  EmbeddingReindexService embeddingReindexService,
                                   DocumentStorageService storageService,
                                   DocumentIngestionExecutor ingestionExecutor,
                                   JsonMapper jsonMapper,
@@ -144,7 +146,7 @@ public class DocumentIngestionService {
         this.subjectRepository = subjectRepository;
         this.pdfTextExtractor = pdfTextExtractor;
         this.strategyFactory = strategyFactory;
-        this.embeddingService = embeddingService;
+        this.embeddingReindexService = embeddingReindexService;
         this.storageService = storageService;
         this.ingestionExecutor = ingestionExecutor;
         this.jsonMapper = jsonMapper;
@@ -194,7 +196,6 @@ public class DocumentIngestionService {
      * @return The persisted ExegeseDocument entity
      * @throws IOException If the file cannot be stored or the PDF cannot be read (document kept as FAILED)
      * @throws DocumentRejectedException If the file is not a PDF or exceeds the page limit
-     * @throws EmbeddingException If chunk embeddings cannot be generated (document kept as FAILED)
      */
     public ExegeseDocument ingestDocument(String title,
                                           String fileName,
@@ -222,6 +223,53 @@ public class DocumentIngestionService {
         Integer updated = transactionTemplate.execute(status -> documentRepository.updateStatus(
                 STATUS_PROCESSING, STATUS_FAILED, ERROR_INTERRUPTED, Instant.now()));
         return updated != null ? updated : 0;
+    }
+
+    /**
+     * Result of {@link #reprocessDocument}.
+     */
+    public enum ReprocessOutcome {
+        /** Reset to PROCESSING and scheduled on the background executor. */
+        QUEUED,
+        /** No document with that id. */
+        NOT_FOUND,
+        /** Only FAILED documents can be reprocessed. */
+        NOT_FAILED,
+        /** The original PDF is not stored (e.g. uploaded before originals were kept): upload it again. */
+        FILE_MISSING
+    }
+
+    /**
+     * Processes a {@code FAILED} document again from its stored original PDF, without a new upload.
+     *
+     * @param documentId Document id
+     * @return What happened
+     */
+    public ReprocessOutcome reprocessDocument(UUID documentId) {
+        ReprocessOutcome outcome = transactionTemplate.execute(status -> {
+            Optional<ExegeseDocument> found = documentRepository.findById(documentId);
+            if (found.isEmpty()) {
+                return ReprocessOutcome.NOT_FOUND;
+            }
+            ExegeseDocument doc = found.get();
+            if (!STATUS_FAILED.equals(doc.getStatus())) {
+                return ReprocessOutcome.NOT_FAILED;
+            }
+            if (!storageService.exists(doc.getStoragePath())) {
+                return ReprocessOutcome.FILE_MISSING;
+            }
+            chunkRepository.deleteByDocumentId(doc.getId());
+            doc.setStatus(STATUS_PROCESSING);
+            doc.setErrorMessage(null);
+            doc.setUpdatedAt(Instant.now());
+            documentRepository.saveAndFlush(doc);
+            log.info("Document '{}' (ID: {}) queued for reprocessing", doc.getTitle(), doc.getId());
+            return ReprocessOutcome.QUEUED;
+        });
+        if (outcome == ReprocessOutcome.QUEUED) {
+            runAfterCommit(() -> dispatch(documentId));
+        }
+        return outcome;
     }
 
     private UploadOutcome register(String title,
@@ -327,22 +375,10 @@ public class DocumentIngestionService {
             log.info("Document '{}' segmented into {} raw chunks via strategy {}", title, rawChunks.size(), effectiveStrategy);
 
             List<RawChunk> newChunks = selectNewChunks(documentId, rawChunks);
-            // Every vector is produced (and validated) before the first chunk is written. Outside PostgreSQL
-            // they are not stored (no vector column), but computing them keeps the failure behavior identical.
-            List<float[]> embeddings = embeddingService.embedAll(newChunks.stream()
-                    .map(c -> EmbeddingService.chunkEmbeddingText(c.title(), c.content()))
-                    .toList());
-
-            transactionTemplate.executeWithoutResult(status -> writeChunks(documentId, newChunks, embeddings,
+            transactionTemplate.executeWithoutResult(status -> writeChunks(documentId, newChunks,
                     extractedPdf.totalPages()));
-            log.info("Successfully indexed document '{}' with {} total chunks", title, newChunks.size());
-        } catch (EmbeddingException e) {
-            String reference = ErrorReference.newReference();
-            log.error("Embedding generation failed for document '{}' [ref={}]: {}", title, reference, e.getMessage());
-            markFailed(documentId, e.isNotConfigured()
-                    ? ERROR_EMBEDDING_NOT_CONFIGURED
-                    : "Embedding generation failed (reference " + reference + ")");
-            throw e;
+            log.info("Indexed document '{}' with {} total chunks (full-text); embeddings follow in the background",
+                    title, newChunks.size());
         } catch (DocumentRejectedException e) {
             log.warn("Document '{}' rejected during ingestion: {}", title, e.getMessage());
             markFailed(documentId, e.getMessage());
@@ -358,28 +394,48 @@ public class DocumentIngestionService {
             markFailed(documentId, "Indexing failed (reference " + reference + ")");
             throw new IllegalStateException("Chunk indexing failed for document " + documentId + " [ref=" + reference + "]", e);
         }
+        runAfterCommit(this::requestEmbeddings);
     }
 
-    private void writeChunks(UUID documentId, List<RawChunk> newChunks, List<float[]> embeddings, int totalPages) {
+    /**
+     * Starts (or queues) the background embedding job for the chunks just written. Never fails the ingestion:
+     * pending chunks are also picked up by the periodic resume.
+     */
+    private void requestEmbeddings() {
+        try {
+            EmbeddingReindexService.StartOutcome outcome = embeddingReindexService.requestPendingEmbeddings();
+            if (outcome == EmbeddingReindexService.StartOutcome.NOT_CONFIGURED) {
+                log.warn("Embeddings pending: GEMINI_API_KEY is not configured, the document is searchable by full "
+                        + "text only until a key is set");
+            }
+        } catch (RuntimeException e) {
+            log.warn("Could not start the embedding job ({}); pending chunks are resumed later",
+                    e.getClass().getSimpleName());
+        }
+    }
+
+    private void writeChunks(UUID documentId, List<RawChunk> newChunks, int totalPages) {
         ExegeseDocument doc = documentRepository.findById(documentId)
                 .orElseThrow(() -> new IllegalStateException("Document not found for ingestion: " + documentId));
         for (int i = 0; i < newChunks.size(); i++) {
             RawChunk rawChunk = newChunks.get(i);
             String metadataJson = serializeMetadata(rawChunk.metadata());
+            // exegese_chunk.title is VARCHAR(500): a very long heading must not fail the whole document
+            String chunkTitle = truncate(rawChunk.title(), MAX_CHUNK_TITLE_LENGTH);
 
             if (isPostgres) {
-                String vectorStr = EmbeddingService.toPgVector(embeddings.get(i));
+                // embedding stays NULL: computed by EmbeddingReindexService after the commit
                 jdbcTemplate.update("""
-                    INSERT INTO exegese_chunk (id, document_id, chunk_hash_sha256, sequence_number, title, content, metadata, embedding, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, cast(? as vector), CURRENT_TIMESTAMP)
+                    INSERT INTO exegese_chunk (id, document_id, chunk_hash_sha256, sequence_number, title, content, metadata, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, CURRENT_TIMESTAMP)
                 """, UUID.randomUUID(), documentId, rawChunk.chunkHashSha256(), rawChunk.sequenceNumber(),
-                        rawChunk.title(), rawChunk.content(), metadataJson, vectorStr);
+                        chunkTitle, rawChunk.content(), metadataJson);
             } else {
                 chunkRepository.save(new ExegeseChunk(
                         doc,
                         rawChunk.chunkHashSha256(),
                         rawChunk.sequenceNumber(),
-                        rawChunk.title(),
+                        chunkTitle,
                         rawChunk.content(),
                         metadataJson
                 ));
@@ -416,6 +472,13 @@ public class DocumentIngestionService {
      * Chunks to index: blank chunks, repeated hashes inside the document and hashes already indexed for this
      * document are skipped. The same text in another document is indexed again (per-document uniqueness).
      */
+    static String truncate(String text, int maxLength) {
+        if (text == null || text.length() <= maxLength) {
+            return text;
+        }
+        return text.substring(0, maxLength - 1).stripTrailing() + "…";
+    }
+
     private List<RawChunk> selectNewChunks(UUID documentId, List<RawChunk> rawChunks) {
         Map<String, RawChunk> byHash = new LinkedHashMap<>();
         for (RawChunk rawChunk : rawChunks) {
