@@ -54,6 +54,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
@@ -126,6 +127,8 @@ class PgVectorHybridSearchContainerTest {
         jdbcTemplate.update("UPDATE exegese_chunk SET embedding = cast(? as vector) WHERE id = ?",
                 EmbeddingService.toPgVector(new float[768]), legacy.getId());
 
+        // An embedding run started by an ingestion in another test must finish first
+        await().atMost(Duration.ofSeconds(30)).until(() -> !reindexService.status().running());
         assertThat(countMissingVectors()).isEqualTo(3);
 
         assertThat(reindexService.start(false)).isEqualTo(EmbeddingReindexService.StartOutcome.STARTED);
@@ -153,22 +156,22 @@ class PgVectorHybridSearchContainerTest {
     }
 
     @Test
-    @DisplayName("Ingestion stores a validated, non-zero 768-dimension vector for every chunk")
+    @DisplayName("Ingestion indexes at once and the background job stores a non-zero 768-dimension vector per chunk")
     void testIngestionStoresVectors() throws IOException {
         ExegeseDocument doc = ingestionService.ingestDocument("Manual PG", "manual-pg.pdf",
                 createPdf("001 — O que é rendimento isento?\nRendimentos isentos não sofrem tributação.\n"
                         + "002 — Quem é dependente?\nFilhos até 21 anos podem ser dependentes."),
                 List.of(), SegmentationStrategyType.STRUCTURED_QA);
 
-        Integer withVector = jdbcTemplate.queryForObject("""
+        assertThat(doc.getStatus()).isEqualTo("INDEXED");
+        UUID documentId = doc.getId();
+        await().atMost(Duration.ofSeconds(30)).until(() -> jdbcTemplate.queryForObject("""
                 SELECT count(*) FROM exegese_chunk
                 WHERE document_id = ? AND embedding IS NOT NULL AND vector_norm(embedding) > 0
-                """, Integer.class, doc.getId());
+                """, Integer.class, documentId) == 2);
         Integer dimensions = jdbcTemplate.queryForObject(
                 "SELECT max(vector_dims(embedding)) FROM exegese_chunk WHERE document_id = ?", Integer.class, doc.getId());
 
-        assertThat(doc.getStatus()).isEqualTo("INDEXED");
-        assertThat(withVector).isEqualTo(2);
         assertThat(dimensions).isEqualTo(768);
     }
 

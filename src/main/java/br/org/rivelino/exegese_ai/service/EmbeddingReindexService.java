@@ -24,8 +24,10 @@ import br.org.rivelino.exegese_ai.repository.ChunkEmbeddingRepository.PendingChu
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -38,14 +40,20 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Background job that recomputes chunk embeddings from the text already stored in {@code exegese_chunk}
- * (no original PDF needed). By default it processes chunks whose vector is missing or all-zero (legacy
- * placeholder vectors); with {@code forceAll} it re-embeds every chunk, e.g. after changing the model.
+ * Background job that computes chunk embeddings from the text already stored in {@code exegese_chunk} (no
+ * original PDF needed). It is started after every document ingestion (chunks are written without a vector
+ * and are searchable by full text at once), by the "Reindex embeddings" admin action and by the periodic
+ * resume ({@link EmbeddingResumeScheduler}). By default it processes chunks whose vector is missing or
+ * all-zero (legacy placeholder vectors); with {@code forceAll} it re-embeds every chunk.
  * <p>
- * Chunks are processed in batches of {@code exegese.embedding.batch-size} on a dedicated virtual thread; at
- * most one run is active at a time. Progress is logged after each batch and exposed by {@link #status()}.
- * A failed batch is counted and skipped; the run aborts after several consecutive failed batches or when the
- * embedding provider is not configured. Invalid vectors are never stored.
+ * Chunks are processed in batches of {@code exegese.embedding.batch-size} on a dedicated virtual thread,
+ * paced by {@link EmbeddingRateLimiter}; at most one run is active at a time, and a run requested while
+ * another is active is queued (one follow-up pass). When the provider refuses a batch for quota (HTTP 429)
+ * the job waits (the provider's suggested delay, or an exponential backoff) and retries the same batch;
+ * after {@code exegese.embedding.max-quota-wait} without progress (typically a daily quota) it stops with
+ * state {@link State#PAUSED_QUOTA} and the remaining chunks are resumed later. Other provider errors skip
+ * the batch; the run aborts after several consecutive failed batches or when no provider is configured.
+ * Invalid vectors are never stored.
  *
  * @author Rivelino Patrício
  */
@@ -56,9 +64,10 @@ public class EmbeddingReindexService {
 
     static final int MAX_CONSECUTIVE_FAILED_BATCHES = 3;
     private static final UUID LOWEST_UUID = new UUID(0L, 0L);
+    private static final Duration MIN_QUOTA_WAIT = Duration.ofSeconds(1);
 
-    /** Lifecycle of the reindex job. */
-    public enum State { IDLE, RUNNING, COMPLETED, FAILED }
+    /** Lifecycle of the embedding job. */
+    public enum State { IDLE, RUNNING, COMPLETED, PAUSED_QUOTA, FAILED }
 
     /** Result of a start request. */
     public enum StartOutcome { STARTED, ALREADY_RUNNING, NOT_CONFIGURED, UNSUPPORTED_DATABASE }
@@ -74,33 +83,83 @@ public class EmbeddingReindexService {
      * @param startedAt Start instant, null when idle
      * @param finishedAt End instant, null while running
      * @param errorReference Correlation reference of the log entry when the run failed
+     * @param waitingUntil While running: end of the current wait for provider quota, null when not waiting
      */
     public record ReindexStatus(State state, boolean forceAll, long total, long processed, long failed,
-                                Instant startedAt, Instant finishedAt, String errorReference) {
+                                Instant startedAt, Instant finishedAt, String errorReference, Instant waitingUntil) {
 
-        static final ReindexStatus IDLE = new ReindexStatus(State.IDLE, false, 0, 0, 0, null, null, null);
+        static final ReindexStatus IDLE = new ReindexStatus(State.IDLE, false, 0, 0, 0, null, null, null, null);
 
         public boolean running() {
             return state == State.RUNNING;
+        }
+
+        public boolean waitingForQuota() {
+            return state == State.RUNNING && waitingUntil != null;
+        }
+
+        ReindexStatus progress(long newProcessed, long newFailed, Instant newWaitingUntil) {
+            return new ReindexStatus(State.RUNNING, forceAll, total, newProcessed, newFailed, startedAt, null, null,
+                    newWaitingUntil);
+        }
+
+        ReindexStatus finish(State finalState, long newProcessed, long newFailed, String reference) {
+            return new ReindexStatus(finalState, forceAll, total, newProcessed, newFailed, startedAt, Instant.now(),
+                    reference, null);
+        }
+    }
+
+    /** Waits between quota retries (replaced in tests). */
+    @FunctionalInterface
+    interface Sleeper {
+        void sleep(Duration duration) throws InterruptedException;
+    }
+
+    /**
+     * Quota retry policy.
+     *
+     * @param initialBackoff First wait when the provider gives no suggested delay (doubled at each retry)
+     * @param maxBackoff Upper bound of a single wait
+     * @param maxQuotaWait Total wait for one batch after which the run pauses
+     */
+    record QuotaPolicy(Duration initialBackoff, Duration maxBackoff, Duration maxQuotaWait) {
+
+        Duration backoff(int attempt) {
+            Duration wait = initialBackoff.multipliedBy(1L << Math.min(attempt, 20));
+            return wait.compareTo(maxBackoff) > 0 ? maxBackoff : wait;
         }
     }
 
     private final ChunkEmbeddingRepository chunkEmbeddingRepository;
     private final EmbeddingService embeddingService;
+    private final EmbeddingRateLimiter rateLimiter;
+    private final QuotaPolicy quotaPolicy;
     private final Executor executor;
+    private final Sleeper sleeper;
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private final AtomicBoolean rerunRequested = new AtomicBoolean(false);
     private final AtomicReference<ReindexStatus> status = new AtomicReference<>(ReindexStatus.IDLE);
 
     @Autowired
-    public EmbeddingReindexService(ChunkEmbeddingRepository chunkEmbeddingRepository, EmbeddingService embeddingService) {
-        this(chunkEmbeddingRepository, embeddingService, virtualThreadExecutor());
+    public EmbeddingReindexService(ChunkEmbeddingRepository chunkEmbeddingRepository,
+                                   EmbeddingService embeddingService,
+                                   EmbeddingRateLimiter rateLimiter,
+                                   @Value("${exegese.embedding.initial-backoff:PT15S}") Duration initialBackoff,
+                                   @Value("${exegese.embedding.max-backoff:PT5M}") Duration maxBackoff,
+                                   @Value("${exegese.embedding.max-quota-wait:PT30M}") Duration maxQuotaWait) {
+        this(chunkEmbeddingRepository, embeddingService, rateLimiter,
+                new QuotaPolicy(initialBackoff, maxBackoff, maxQuotaWait), virtualThreadExecutor(), Thread::sleep);
     }
 
     EmbeddingReindexService(ChunkEmbeddingRepository chunkEmbeddingRepository, EmbeddingService embeddingService,
-                            Executor executor) {
+                            EmbeddingRateLimiter rateLimiter, QuotaPolicy quotaPolicy, Executor executor,
+                            Sleeper sleeper) {
         this.chunkEmbeddingRepository = chunkEmbeddingRepository;
         this.embeddingService = embeddingService;
+        this.rateLimiter = rateLimiter;
+        this.quotaPolicy = quotaPolicy;
         this.executor = executor;
+        this.sleeper = sleeper;
     }
 
     private static Executor virtualThreadExecutor() {
@@ -109,7 +168,7 @@ public class EmbeddingReindexService {
     }
 
     /**
-     * Starts a reindex run in the background unless one is already running.
+     * Starts a run in the background unless one is already running.
      *
      * @param forceAll true to re-embed every chunk, false for missing or zero vectors only
      * @return What happened
@@ -126,14 +185,28 @@ public class EmbeddingReindexService {
         }
         try {
             long total = chunkEmbeddingRepository.countChunks(forceAll);
-            status.set(new ReindexStatus(State.RUNNING, forceAll, total, 0, 0, Instant.now(), null, null));
-            log.info("Embedding reindex started (forceAll={}): {} chunks selected", forceAll, total);
+            status.set(new ReindexStatus(State.RUNNING, forceAll, total, 0, 0, Instant.now(), null, null, null));
+            log.info("Embedding job started (forceAll={}): {} chunks selected", forceAll, total);
             executor.execute(() -> run(forceAll));
             return StartOutcome.STARTED;
         } catch (RuntimeException e) {
             running.set(false);
             throw e;
         }
+    }
+
+    /**
+     * Requests embeddings for chunks that have none (e.g. a document that was just indexed): starts a run, or
+     * queues one follow-up pass when a run is already active (its keyset may already be past the new chunks).
+     *
+     * @return What happened
+     */
+    public StartOutcome requestPendingEmbeddings() {
+        StartOutcome outcome = start(false);
+        if (outcome == StartOutcome.ALREADY_RUNNING) {
+            rerunRequested.set(true);
+        }
+        return outcome;
     }
 
     /**
@@ -144,18 +217,17 @@ public class EmbeddingReindexService {
     }
 
     private void run(boolean forceAll) {
-        ReindexStatus started = status.get();
         long processed = 0;
         long failed = 0;
         int consecutiveFailures = 0;
         UUID after = LOWEST_UUID;
+        State finalState = State.COMPLETED;
         try {
             while (true) {
                 List<PendingChunk> batch = chunkEmbeddingRepository.findBatch(forceAll, after, embeddingService.batchSize());
                 if (batch.isEmpty()) {
                     break;
                 }
-                after = batch.get(batch.size() - 1).id();
 
                 List<PendingChunk> embeddable = new ArrayList<>(batch.size());
                 for (PendingChunk chunk : batch) {
@@ -166,43 +238,107 @@ public class EmbeddingReindexService {
                     }
                 }
 
-                try {
-                    List<float[]> vectors = embeddingService.embedAll(embeddable.stream()
-                            .map(c -> EmbeddingService.chunkEmbeddingText(c.title(), c.content()))
-                            .toList());
-                    Map<UUID, float[]> updates = new LinkedHashMap<>();
-                    for (int i = 0; i < embeddable.size(); i++) {
-                        updates.put(embeddable.get(i).id(), vectors.get(i));
-                    }
-                    chunkEmbeddingRepository.updateEmbeddings(updates);
+                BatchResult result = embedBatch(embeddable, processed, failed);
+                if (result == BatchResult.PAUSED) {
+                    finalState = State.PAUSED_QUOTA;
+                    break;
+                }
+                if (result == BatchResult.STORED) {
                     processed += embeddable.size();
                     consecutiveFailures = 0;
-                } catch (EmbeddingException e) {
-                    if (e.isNotConfigured()) {
-                        throw e;
-                    }
+                } else {
                     failed += embeddable.size();
                     consecutiveFailures++;
-                    log.warn("Embedding reindex: batch of {} chunks failed ({}); skipped", embeddable.size(), e.getMessage());
                     if (consecutiveFailures >= MAX_CONSECUTIVE_FAILED_BATCHES) {
-                        throw new IllegalStateException("Aborted after " + consecutiveFailures + " consecutive failed batches", e);
+                        throw new IllegalStateException("Aborted after " + consecutiveFailures + " consecutive failed batches");
                     }
                 }
+                // The keyset only moves forward once the batch is stored or skipped (never during quota waits)
+                after = batch.get(batch.size() - 1).id();
 
-                status.set(new ReindexStatus(State.RUNNING, forceAll, started.total(), processed, failed,
-                        started.startedAt(), null, null));
-                log.info("Embedding reindex progress: {} stored, {} failed, {} selected", processed, failed, started.total());
+                status.set(status.get().progress(processed, failed, null));
+                log.info("Embedding job progress: {} stored, {} failed, {} selected", processed, failed, status.get().total());
             }
-            status.set(new ReindexStatus(State.COMPLETED, forceAll, started.total(), processed, failed,
-                    started.startedAt(), Instant.now(), null));
-            log.info("Embedding reindex completed: {} stored, {} failed", processed, failed);
+
+            status.set(status.get().finish(finalState, processed, failed, null));
+            if (finalState == State.PAUSED_QUOTA) {
+                log.warn("Embedding job paused: the provider quota is still exhausted after waiting {} ({} stored, {} "
+                        + "pending chunks are resumed automatically later)", quotaPolicy.maxQuotaWait(), processed,
+                        Math.max(0, status.get().total() - processed - failed));
+            } else {
+                log.info("Embedding job completed: {} stored, {} failed", processed, failed);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Embedding job interrupted (application shutdown?) after {} stored; pending chunks are resumed later",
+                    processed);
+            status.set(status.get().finish(State.FAILED, processed, failed, ErrorReference.newReference()));
+            finalState = State.FAILED;
         } catch (RuntimeException e) {
             String reference = ErrorReference.newReference();
-            log.error("Embedding reindex failed [ref={}] after {} stored, {} failed", reference, processed, failed, e);
-            status.set(new ReindexStatus(State.FAILED, forceAll, started.total(), processed, failed,
-                    started.startedAt(), Instant.now(), reference));
+            log.error("Embedding job failed [ref={}] after {} stored, {} failed", reference, processed, failed, e);
+            status.set(status.get().finish(State.FAILED, processed, failed, reference));
+            finalState = State.FAILED;
         } finally {
             running.set(false);
         }
+
+        if (finalState == State.COMPLETED && rerunRequested.getAndSet(false)) {
+            log.info("Embedding job: starting the queued follow-up pass for chunks added during the run");
+            start(false);
+        }
+    }
+
+    private enum BatchResult { STORED, SKIPPED, PAUSED }
+
+    /**
+     * Embeds and stores one batch, waiting and retrying while the provider refuses it for quota.
+     */
+    private BatchResult embedBatch(List<PendingChunk> embeddable, long processed, long failed) throws InterruptedException {
+        if (embeddable.isEmpty()) {
+            return BatchResult.STORED;
+        }
+        List<String> texts = embeddable.stream()
+                .map(c -> EmbeddingService.chunkEmbeddingText(c.title(), c.content()))
+                .toList();
+        Duration quotaWaited = Duration.ZERO;
+        int attempt = 0;
+        while (true) {
+            try {
+                rateLimiter.acquire(texts);
+                List<float[]> vectors = embeddingService.embedAll(texts);
+                Map<UUID, float[]> updates = new LinkedHashMap<>();
+                for (int i = 0; i < embeddable.size(); i++) {
+                    updates.put(embeddable.get(i).id(), vectors.get(i));
+                }
+                chunkEmbeddingRepository.updateEmbeddings(updates);
+                return BatchResult.STORED;
+            } catch (EmbeddingException e) {
+                if (e.isNotConfigured()) {
+                    throw e;
+                }
+                if (!e.isRateLimited()) {
+                    log.warn("Embedding job: batch of {} chunks failed ({}); skipped", embeddable.size(), e.getMessage());
+                    return BatchResult.SKIPPED;
+                }
+                Duration wait = e.retryAfter() != null
+                        ? max(e.retryAfter(), MIN_QUOTA_WAIT)
+                        : quotaPolicy.backoff(attempt);
+                attempt++;
+                if (quotaWaited.plus(wait).compareTo(quotaPolicy.maxQuotaWait()) > 0) {
+                    return BatchResult.PAUSED;
+                }
+                log.warn("Embedding job: provider quota exceeded; waiting {} before retrying the batch (attempt {})",
+                        wait, attempt);
+                status.set(status.get().progress(processed, failed, Instant.now().plus(wait)));
+                sleeper.sleep(wait);
+                quotaWaited = quotaWaited.plus(wait);
+                status.set(status.get().progress(processed, failed, null));
+            }
+        }
+    }
+
+    private static Duration max(Duration a, Duration b) {
+        return a.compareTo(b) >= 0 ? a : b;
     }
 }

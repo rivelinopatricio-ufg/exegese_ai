@@ -22,6 +22,7 @@ package br.org.rivelino.exegese_ai.controller;
 import br.org.rivelino.exegese_ai.domain.dto.DocumentSummaryDTO;
 import br.org.rivelino.exegese_ai.domain.entity.ExegeseSubject;
 import br.org.rivelino.exegese_ai.domain.enums.SegmentationStrategyType;
+import br.org.rivelino.exegese_ai.repository.ChunkEmbeddingRepository;
 import br.org.rivelino.exegese_ai.service.DocumentIngestionService;
 import br.org.rivelino.exegese_ai.service.DocumentRejectedException;
 import br.org.rivelino.exegese_ai.service.DocumentStorageService;
@@ -38,6 +39,7 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -46,6 +48,8 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.io.IOException;
+import java.time.Duration;
+import java.time.Instant;
 import java.io.InputStream;
 import java.util.List;
 import java.util.Locale;
@@ -69,17 +73,20 @@ public class AdminDocumentController {
     private final DocumentIngestionService ingestionService;
     private final EmbeddingReindexService reindexService;
     private final EmbeddingService embeddingService;
+    private final ChunkEmbeddingRepository chunkEmbeddingRepository;
     private final MessageSource messageSource;
 
     public AdminDocumentController(SubjectCatalogService catalogService,
                                    DocumentIngestionService ingestionService,
                                    EmbeddingReindexService reindexService,
                                    EmbeddingService embeddingService,
+                                   ChunkEmbeddingRepository chunkEmbeddingRepository,
                                    MessageSource messageSource) {
         this.catalogService = catalogService;
         this.ingestionService = ingestionService;
         this.reindexService = reindexService;
         this.embeddingService = embeddingService;
+        this.chunkEmbeddingRepository = chunkEmbeddingRepository;
         this.messageSource = messageSource;
     }
 
@@ -94,8 +101,13 @@ public class AdminDocumentController {
         model.addAttribute("subjects", subjects);
         model.addAttribute("selectedSubjectId", subjectId);
         model.addAttribute("selectedStatus", status);
-        model.addAttribute("reindexStatus", reindexService.status());
+        EmbeddingReindexService.ReindexStatus reindexStatus = reindexService.status();
+        model.addAttribute("reindexStatus", reindexStatus);
+        model.addAttribute("reindexWaitSeconds", reindexStatus.waitingForQuota()
+                ? Math.max(1, Duration.between(Instant.now(), reindexStatus.waitingUntil()).toSeconds())
+                : null);
         model.addAttribute("embeddingConfigured", embeddingService.isConfigured());
+        model.addAttribute("embeddingProgress", chunkEmbeddingRepository.embeddingProgressByDocument());
         model.addAttribute("processingDocuments", documents.stream()
                 .anyMatch(doc -> DocumentIngestionService.STATUS_PROCESSING.equals(doc.status())));
 
@@ -122,22 +134,16 @@ public class AdminDocumentController {
             return "redirect:/admin/documents";
         }
 
-        if (!embeddingService.isConfigured()) {
-            // Without an embedding provider every ingestion would fail: refuse before storing anything
-            String reference = ErrorReference.newReference();
-            log.warn("Document upload refused: embeddings unavailable (GEMINI_API_KEY not configured) [ref={}]", reference);
-            redirectAttributes.addFlashAttribute("errorMessage", messageSource.getMessage(
-                    "admin.document.error.embedding_unavailable", new Object[]{reference}, userLocale));
-            return "redirect:/admin/documents";
-        }
-
         String fileName = DocumentStorageService.sanitizeFileName(file.getOriginalFilename());
         String docTitle = DocumentStorageService.sanitizeTitle(title, fileName);
         try (InputStream input = file.getInputStream()) {
             DocumentIngestionService.UploadOutcome outcome =
                     ingestionService.submitDocument(docTitle, fileName, input, subjectIds, strategy);
             String key = switch (outcome.state()) {
-                case QUEUED -> "admin.document.success.queued";
+                // Without an embedding provider the document is still indexed for full-text search
+                case QUEUED -> embeddingService.isConfigured()
+                        ? "admin.document.success.queued"
+                        : "admin.document.warning.embeddings_pending";
                 case ALREADY_INDEXED -> "admin.document.success.already_indexed";
                 case ALREADY_PROCESSING -> "admin.document.success.already_processing";
             };
@@ -155,6 +161,37 @@ public class AdminDocumentController {
             redirectAttributes.addFlashAttribute("errorMessage", errorMsg);
         }
 
+        return "redirect:/admin/documents";
+    }
+
+    /**
+     * Processes a {@code FAILED} document again from its stored original PDF (no new upload needed).
+     */
+    @PostMapping("/{id}/reprocess")
+    public String reprocessDocument(@PathVariable UUID id,
+                                    Locale locale,
+                                    RedirectAttributes redirectAttributes) {
+        Locale userLocale = (locale != null) ? locale : LocaleContextHolder.getLocale();
+        DocumentIngestionService.ReprocessOutcome outcome;
+        try {
+            outcome = ingestionService.reprocessDocument(id);
+        } catch (RuntimeException e) {
+            String reference = ErrorReference.newReference();
+            log.error("Document {} could not be queued for reprocessing [ref={}]", id, reference, e);
+            redirectAttributes.addFlashAttribute("errorMessage", messageSource.getMessage(
+                    "admin.document.error.ingestion_failed", new Object[]{reference}, userLocale));
+            return "redirect:/admin/documents";
+        }
+        switch (outcome) {
+            case QUEUED -> redirectAttributes.addFlashAttribute("successMessage",
+                    messageSource.getMessage("admin.document.reprocess.queued", null, userLocale));
+            case NOT_FOUND -> redirectAttributes.addFlashAttribute("errorMessage",
+                    messageSource.getMessage("admin.document.reprocess.not_found", null, userLocale));
+            case NOT_FAILED -> redirectAttributes.addFlashAttribute("errorMessage",
+                    messageSource.getMessage("admin.document.reprocess.not_failed", null, userLocale));
+            case FILE_MISSING -> redirectAttributes.addFlashAttribute("errorMessage",
+                    messageSource.getMessage("admin.document.reprocess.file_missing", null, userLocale));
+        }
         return "redirect:/admin/documents";
     }
 

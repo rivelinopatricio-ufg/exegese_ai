@@ -26,7 +26,6 @@ import br.org.rivelino.exegese_ai.repository.ExegeseChunkRepository;
 import br.org.rivelino.exegese_ai.repository.ExegeseDocumentRepository;
 import br.org.rivelino.exegese_ai.service.CryptoService;
 import br.org.rivelino.exegese_ai.service.DocumentIngestionService;
-import br.org.rivelino.exegese_ai.service.EmbeddingException;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
@@ -48,10 +47,10 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
@@ -108,34 +107,24 @@ class EmbeddingAdministrationIntegrationTest {
     }
 
     @Test
-    @DisplayName("Without embeddings the document is kept as FAILED and no chunk (nor zero vector) is stored")
-    void testIngestionFailsWithoutEmbeddings() throws IOException {
-        byte[] pdf = createPdf("001 — Pergunta sem embeddings disponíveis\nResposta que não pode ser indexada.");
+    @DisplayName("Embedding failures never fail ingestion: the document is INDEXED for full-text search at once")
+    void testIngestionIndexedWithoutEmbeddings() throws IOException {
+        byte[] pdf = createPdf("001 — Pergunta sem embeddings disponíveis\nResposta indexada só por texto.");
         createdHashes.add(cryptoService.sha256(pdf));
         fakeEmbeddingModel.setUnavailable(true);
 
-        assertThatThrownBy(() -> ingestionService.ingestDocument("Sem Embeddings", "sem-embeddings.pdf", pdf,
-                List.of(), SegmentationStrategyType.STRUCTURED_QA))
-                .isInstanceOfSatisfying(EmbeddingException.class, e -> assertThat(e.isNotConfigured()).isTrue());
-
-        Optional<ExegeseDocument> stored = documentRepository.findByFileHashSha256(cryptoService.sha256(pdf));
-        assertThat(stored).isPresent();
-        assertThat(stored.get().getStatus()).isEqualTo("FAILED");
-        assertThat(stored.get().getErrorMessage()).contains("GEMINI_API_KEY");
-        assertThat(chunkRepository.findByDocumentIdOrderBySequenceNumberAsc(stored.get().getId())).isEmpty();
-
-        // Once embeddings work again, the same file is re-ingested from scratch
-        fakeEmbeddingModel.setUnavailable(false);
-        ExegeseDocument retried = ingestionService.ingestDocument("Sem Embeddings", "sem-embeddings.pdf", pdf,
+        ExegeseDocument indexed = ingestionService.ingestDocument("Sem Embeddings", "sem-embeddings.pdf", pdf,
                 List.of(), SegmentationStrategyType.STRUCTURED_QA);
-        assertThat(retried.getStatus()).isEqualTo("INDEXED");
-        assertThat(chunkRepository.findByDocumentIdOrderBySequenceNumberAsc(retried.getId())).isNotEmpty();
+
+        assertThat(indexed.getStatus()).isEqualTo("INDEXED");
+        assertThat(indexed.getErrorMessage()).isNull();
+        assertThat(chunkRepository.findByDocumentIdOrderBySequenceNumberAsc(indexed.getId())).isNotEmpty();
     }
 
     @Test
     @WithMockUser(username = "embedding.operator@exegese.test", roles = "OPERATOR")
-    @DisplayName("Upload without embeddings is accepted, then listed as FAILED with the 'configure GEMINI_API_KEY' hint")
-    void testUploadShowsEmbeddingUnavailableMessage() throws Exception {
+    @DisplayName("Upload is accepted and indexed even while the embedding provider refuses calls")
+    void testUploadIndexedWhileEmbeddingsUnavailable() throws Exception {
         byte[] pdf = createPdf("001 — Upload sem embeddings\nTexto do upload sem embeddings.");
         String hash = cryptoService.sha256(pdf);
         createdHashes.add(hash);
@@ -150,11 +139,46 @@ class EmbeddingAdministrationIntegrationTest {
                 .andExpect(flash().attributeExists("successMessage"));
 
         await().atMost(Duration.ofSeconds(20)).until(() -> documentRepository.findByFileHashSha256(hash)
-                .map(ExegeseDocument::getStatus).filter("FAILED"::equals).isPresent());
+                .map(ExegeseDocument::getStatus).filter("INDEXED"::equals).isPresent());
+    }
 
-        mockMvc.perform(get("/admin/documents"))
-                .andExpect(status().isOk())
-                .andExpect(content().string(containsString("GEMINI_API_KEY")));
+    @Test
+    @WithMockUser(username = "embedding.operator@exegese.test", roles = "OPERATOR")
+    @DisplayName("A FAILED document is reprocessed from its stored PDF without a new upload")
+    void testReprocessFailedDocument() throws Exception {
+        byte[] pdf = createPdf("001 — Pergunta para reprocessar\nResposta do reprocessamento.");
+        String hash = cryptoService.sha256(pdf);
+        createdHashes.add(hash);
+        ExegeseDocument doc = ingestionService.ingestDocument("Reprocessar", "reprocessar.pdf", pdf,
+                List.of(), SegmentationStrategyType.STRUCTURED_QA);
+        doc.setStatus("FAILED");
+        doc.setErrorMessage("Embedding generation failed (reference TEST)");
+        documentRepository.saveAndFlush(doc);
+
+        mockMvc.perform(post("/admin/documents/{id}/reprocess", doc.getId()))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(post("/admin/documents/{id}/reprocess", doc.getId()).with(csrf()))
+                .andExpect(redirectedUrl("/admin/documents"))
+                .andExpect(flash().attributeExists("successMessage"));
+
+        await().atMost(Duration.ofSeconds(20)).until(() -> documentRepository.findById(doc.getId())
+                .map(ExegeseDocument::getStatus).filter("INDEXED"::equals).isPresent());
+        assertThat(documentRepository.findById(doc.getId()).orElseThrow().getErrorMessage()).isNull();
+        assertThat(chunkRepository.findByDocumentIdOrderBySequenceNumberAsc(doc.getId())).isNotEmpty();
+
+        // Only FAILED documents can be reprocessed
+        mockMvc.perform(post("/admin/documents/{id}/reprocess", doc.getId()).with(csrf()))
+                .andExpect(redirectedUrl("/admin/documents"))
+                .andExpect(flash().attributeExists("errorMessage"));
+    }
+
+    @Test
+    @WithMockUser(username = "embedding.user@exegese.test", roles = "USER")
+    @DisplayName("Reprocessing is forbidden to standard users")
+    void testReprocessForbiddenForUsers() throws Exception {
+        mockMvc.perform(post("/admin/documents/{id}/reprocess", UUID.randomUUID()).with(csrf()))
+                .andExpect(status().isForbidden());
     }
 
     @Test

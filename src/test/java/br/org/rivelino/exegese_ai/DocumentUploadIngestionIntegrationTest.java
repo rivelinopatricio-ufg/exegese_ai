@@ -43,6 +43,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.mockito.stubbing.Answer;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.test.context.support.WithMockUser;
@@ -63,6 +65,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mockingDetails;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
@@ -102,7 +107,7 @@ class DocumentUploadIngestionIntegrationTest {
     @Autowired
     private ExegeseDocumentRepository documentRepository;
 
-    @Autowired
+    @MockitoSpyBean
     private ExegeseChunkRepository chunkRepository;
 
     @Autowired
@@ -209,15 +214,19 @@ class DocumentUploadIngestionIntegrationTest {
         assertThat(rawChunks).hasSize(2);
         String conflictingHash = rawChunks.get(1).chunkHashSha256();
 
-        // Between the embedding computation and the chunk transaction, a concurrent writer stores a chunk with
-        // the same (document, hash): the second insert violates the per-document unique constraint
+        // Between the duplicate check and the chunk transaction, a concurrent writer stores a chunk with the
+        // same (document, hash): the insert of that chunk violates the per-document unique constraint
         AtomicBoolean fired = new AtomicBoolean();
-        fakeEmbeddingModel.setBeforeEmbedHook(() -> {
-            if (fired.compareAndSet(false, true)) {
+        // The spied repository is an interface proxy: delegate through the spy's default answer
+        Answer<?> realRepository = mockingDetails(chunkRepository).getMockCreationSettings().getDefaultAnswer();
+        doAnswer(invocation -> {
+            boolean exists = (boolean) realRepository.answer(invocation);
+            if (!exists && conflictingHash.equals(invocation.getArgument(1)) && fired.compareAndSet(false, true)) {
                 ExegeseDocument registered = documentRepository.findByFileHashSha256(hash).orElseThrow();
                 chunkRepository.save(new ExegeseChunk(registered, conflictingHash, 99, "Concurrent", "Concurrent chunk", "{}"));
             }
-        });
+            return exists;
+        }).when(chunkRepository).existsByDocumentIdAndChunkHashSha256(any(), any());
 
         assertThatThrownBy(() -> ingestionService.ingestDocument("Manual Reversão", "reversao.pdf", pdf,
                 List.of(), SegmentationStrategyType.STRUCTURED_QA))

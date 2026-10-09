@@ -24,8 +24,11 @@ import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Single entry point for text embeddings (search queries, document chunks and reindexing). It enforces the
@@ -38,13 +41,20 @@ import java.util.List;
 @Service
 public class EmbeddingService {
 
+    private static final int HTTP_TOO_MANY_REQUESTS = 429;
+
+    /** Wait suggested by the Gemini API in quota errors, e.g. "Please retry in 37.5s" or "retryDelay": "37s". */
+    private static final Pattern RETRY_DELAY_PATTERN = Pattern.compile(
+            "(?i)(?:retry in|\"retryDelay\"\\s*:\\s*\")\\s*([0-9]+(?:\\.[0-9]+)?)\\s*s");
+    private static final Duration MAX_SUGGESTED_DELAY = Duration.ofHours(1);
+
     private final EmbeddingModel embeddingModel;
     private final int dimensions;
     private final int batchSize;
 
     public EmbeddingService(EmbeddingModel embeddingModel,
                             @Value("${exegese.embedding.dimensions:768}") int dimensions,
-                            @Value("${exegese.embedding.batch-size:32}") int batchSize) {
+                            @Value("${exegese.embedding.batch-size:16}") int batchSize) {
         if (dimensions <= 0) {
             throw new IllegalArgumentException("exegese.embedding.dimensions must be positive");
         }
@@ -127,8 +137,51 @@ public class EmbeddingService {
         } catch (EmbeddingException e) {
             throw e;
         } catch (RuntimeException e) {
+            ApiException apiException = findApiException(e);
+            if (apiException != null && apiException.code() == HTTP_TOO_MANY_REQUESTS) {
+                throw EmbeddingException.rateLimited("Embedding provider quota exceeded (" + describe(e) + ")", e,
+                        suggestedRetryDelay(apiException.message()));
+            }
             throw new EmbeddingException("Embedding provider call failed (" + describe(e) + ")", e);
         }
+    }
+
+    /**
+     * Extracts the wait suggested by the provider from a quota error message (only the number is kept; the
+     * message itself is never propagated).
+     *
+     * @param providerMessage Provider error message, may be null
+     * @return The suggested wait, capped at one hour, or null when the message has none
+     */
+    static Duration suggestedRetryDelay(String providerMessage) {
+        if (providerMessage == null) {
+            return null;
+        }
+        Matcher matcher = RETRY_DELAY_PATTERN.matcher(providerMessage);
+        if (!matcher.find()) {
+            return null;
+        }
+        try {
+            long millis = (long) Math.ceil(Double.parseDouble(matcher.group(1)) * 1000);
+            Duration delay = Duration.ofMillis(Math.max(0, millis));
+            return delay.compareTo(MAX_SUGGESTED_DELAY) > 0 ? MAX_SUGGESTED_DELAY : delay;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static ApiException findApiException(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof ApiException apiException) {
+                return apiException;
+            }
+            if (current.getCause() == current) {
+                return null;
+            }
+            current = current.getCause();
+        }
+        return null;
     }
 
     /**
@@ -193,11 +246,8 @@ public class EmbeddingService {
      * Short, safe description of a provider failure: exception type and HTTP status only (no response body).
      */
     private static String describe(RuntimeException e) {
-        Throwable root = e;
-        while (!(root instanceof ApiException) && root.getCause() != null && root.getCause() != root) {
-            root = root.getCause();
-        }
-        if (root instanceof ApiException apiException) {
+        ApiException apiException = findApiException(e);
+        if (apiException != null) {
             return apiException.getClass().getSimpleName() + ", HTTP " + apiException.code();
         }
         return e.getClass().getSimpleName();
