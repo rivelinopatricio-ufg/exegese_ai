@@ -30,15 +30,17 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.math.BigDecimal;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -46,7 +48,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Unit tests for {@link LlmClientService} without any external network access: endpoint policy enforcement
  * before every call (M3) and the connectivity test (T7), exercised against a loopback HTTP server standing in
- * for a local Ollama.
+ * for a local Ollama and mock LLM backends.
  *
  * @author Rivelino Patrício
  */
@@ -67,11 +69,24 @@ class LlmClientServiceTest {
             requests.add(exchange.getRequestMethod() + " " + exchange.getRequestURI().getPath());
             requestBodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             byte[] body;
-            if (exchange.getRequestURI().getPath().endsWith("/chat/completions") && status.get() == 200) {
-                exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
-                body = ("data: {\"choices\":[{\"delta\":{\"content\":\"Olá\"}}]}\n\n"
-                        + "data: {\"choices\":[{\"delta\":{\"content\":\" mundo\"}}]}\n\n"
-                        + "data: [DONE]\n\n").getBytes(StandardCharsets.UTF_8);
+            String path = exchange.getRequestURI().getPath();
+            if (status.get() == 200) {
+                if (path.endsWith("/chat/completions")) {
+                    exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+                    body = ("data: {\"choices\":[{\"delta\":{\"content\":\"Olá\"}}]}\n\n"
+                            + "data: {\"choices\":[{\"delta\":{\"content\":\" mundo\"}}]}\n\n"
+                            + "data: [DONE]\n\n").getBytes(StandardCharsets.UTF_8);
+                } else if (path.endsWith(":streamGenerateContent")) {
+                    exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+                    body = ("data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Gemini token\"}]}}]}\n\n")
+                            .getBytes(StandardCharsets.UTF_8);
+                } else if (path.endsWith("/v1/messages")) {
+                    exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+                    body = ("data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Claude token\"}}\n\n")
+                            .getBytes(StandardCharsets.UTF_8);
+                } else {
+                    body = "{\"error\":\"secret upstream detail\"}".getBytes(StandardCharsets.UTF_8);
+                }
             } else {
                 body = "{\"error\":\"secret upstream detail\"}".getBytes(StandardCharsets.UTF_8);
             }
@@ -114,6 +129,21 @@ class LlmClientServiceTest {
         return config;
     }
 
+    private LlmClientService createPermissiveClient() {
+        LlmEndpointPolicy permissivePolicy = new LlmEndpointPolicy("", baseUrl) {
+            @Override
+            public String resolveBaseUrl(ModelProvider provider, String configuredBaseUrl) {
+                return baseUrl;
+            }
+
+            @Override
+            public void validate(ModelProvider provider, String candidate) {
+                // Permissive for loopback unit tests
+            }
+        };
+        return new LlmClientService(JsonMapper.builder().build(), permissivePolicy);
+    }
+
     @Test
     @DisplayName("Ping succeeds with a minimal GET on the model list, reporting only the HTTP status")
     void testPingOk() {
@@ -122,6 +152,32 @@ class LlmClientServiceTest {
         assertThat(result.status()).isEqualTo(LlmPingResult.Status.OK);
         assertThat(result.httpStatus()).isEqualTo(200);
         assertThat(requests).containsExactly("GET /v1/models");
+    }
+
+    @Test
+    @DisplayName("Ping exercises provider switches for Gemini, Claude, and cloud OpenAI-compatibles")
+    void testPingProviders() {
+        LlmClientService permissive = createPermissiveClient();
+
+        LlmPingResult geminiPing = permissive.ping(config(ModelProvider.GEMINI, "gemini-2.5-flash", baseUrl), "key-gemini");
+        assertThat(geminiPing.status()).isEqualTo(LlmPingResult.Status.OK);
+
+        LlmPingResult claudePing = permissive.ping(config(ModelProvider.CLAUDE, "claude-3-7-sonnet", baseUrl), "key-claude");
+        assertThat(claudePing.status()).isEqualTo(LlmPingResult.Status.OK);
+
+        LlmPingResult openAiPing = permissive.ping(config(ModelProvider.OPENAI, "gpt-4o", baseUrl), "key-openai");
+        assertThat(openAiPing.status()).isEqualTo(LlmPingResult.Status.OK);
+
+        LlmPingResult cerebrasPing = permissive.ping(config(ModelProvider.CEREBRAS, "gpt-oss", baseUrl), "key-cerebras");
+        assertThat(cerebrasPing.status()).isEqualTo(LlmPingResult.Status.OK);
+    }
+
+    @Test
+    @DisplayName("Ping reports an illegal argument error when model name produces an invalid URI")
+    void testPingInvalidUri() {
+        LlmClientService permissive = createPermissiveClient();
+        LlmPingResult result = permissive.ping(config(ModelProvider.GEMINI, "invalid uri model with space ^|", baseUrl), "key-test");
+        assertThat(result.status()).isEqualTo(LlmPingResult.Status.ERROR);
     }
 
     @Test
@@ -162,7 +218,6 @@ class LlmClientServiceTest {
     @DisplayName("Streaming refuses a base URL outside the allowlist before sending the API key")
     void testStreamingRefusesDisallowedEndpoint() {
         List<String> tokens = new ArrayList<>();
-        // A cloud provider pointed at a non-allowlisted host (here the loopback server) never receives the key
         boolean streamed = client.streamInference(config(ModelProvider.DEEPSEEK, "deepseek-chat", baseUrl),
                 "sk-secret", "system", "question", tokens::add);
 
@@ -180,8 +235,49 @@ class LlmClientServiceTest {
 
         assertThat(streamed).isTrue();
         assertThat(String.join("", tokens)).isEqualTo("Olá mundo");
-        assertThat(requests).containsExactly("POST /v1/chat/completions");
+        assertThat(requests).contains("POST /v1/chat/completions");
         assertThat(requestBodies.get(0)).contains("\"max_tokens\":1024").contains("\"model\":\"llama3.2\"");
+    }
+
+    @Test
+    @DisplayName("Gemini and Claude HTTP streaming execute end-to-end and process generation options")
+    void testGeminiAndClaudeHttpStreaming() {
+        LlmClientService permissive = createPermissiveClient();
+
+        // Gemini
+        List<String> geminiTokens = new ArrayList<>();
+        AiModelConfig geminiCfg = config(ModelProvider.GEMINI, "gemini-2.5-flash", baseUrl);
+        geminiCfg.setTemperature(new BigDecimal("0.7"));
+        geminiCfg.setMaxTokens(500);
+        boolean geminiOk = permissive.streamInference(geminiCfg, "key-gemini", "sys", "quest", geminiTokens::add);
+        assertThat(geminiOk).isTrue();
+        assertThat(geminiTokens).containsExactly("Gemini token");
+
+        // Claude
+        List<String> claudeTokens = new ArrayList<>();
+        AiModelConfig claudeCfg = config(ModelProvider.CLAUDE, "claude-3-7-sonnet", baseUrl);
+        claudeCfg.setTemperature(new BigDecimal("0.5"));
+        claudeCfg.setMaxTokens(1000);
+        boolean claudeOk = permissive.streamInference(claudeCfg, "key-claude", "sys", "quest", claudeTokens::add);
+        assertThat(claudeOk).isTrue();
+        assertThat(claudeTokens).containsExactly("Claude token");
+    }
+
+    @Test
+    @DisplayName("Gemini and Claude return false on upstream HTTP error")
+    void testGeminiAndClaudeHttpErrors() {
+        status.set(500);
+        LlmClientService permissive = createPermissiveClient();
+
+        List<String> geminiTokens = new ArrayList<>();
+        boolean geminiOk = permissive.streamInference(config(ModelProvider.GEMINI, "gemini-2.5-flash", baseUrl),
+                "key-gemini", "sys", "quest", geminiTokens::add);
+        assertThat(geminiOk).isFalse();
+
+        List<String> claudeTokens = new ArrayList<>();
+        boolean claudeOk = permissive.streamInference(config(ModelProvider.CLAUDE, "claude-3-7-sonnet", baseUrl),
+                "key-claude", "sys", "quest", claudeTokens::add);
+        assertThat(claudeOk).isFalse();
     }
 
     @Test
@@ -191,6 +287,66 @@ class LlmClientServiceTest {
         assertThat(LlmClientService.isOpenAiReasoningModel("o3-mini")).isTrue();
         assertThat(LlmClientService.isOpenAiReasoningModel("gpt-4.1")).isFalse();
         assertThat(LlmClientService.isOpenAiReasoningModel(null)).isFalse();
+    }
+
+    @Test
+    @DisplayName("Gemini streaming parses SSE candidates correctly")
+    void testGeminiStreaming() {
+        List<String> tokens = new ArrayList<>();
+        AtomicBoolean hasEmitted = new AtomicBoolean(false);
+        String sseChunk = "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Gemini token\"}]}}]}";
+
+        client.parseGeminiDataChunk(sseChunk, tokens::add, hasEmitted);
+
+        assertThat(hasEmitted.get()).isTrue();
+        assertThat(tokens).containsExactly("Gemini token");
+    }
+
+    @Test
+    @DisplayName("Claude streaming parses content_block_delta correctly")
+    void testClaudeStreaming() {
+        List<String> tokens = new ArrayList<>();
+        AtomicBoolean hasEmitted = new AtomicBoolean(false);
+        String sseChunk = "{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Claude token\"}}";
+
+        client.parseClaudeDataChunk(sseChunk, tokens::add, hasEmitted);
+
+        assertThat(hasEmitted.get()).isTrue();
+        assertThat(tokens).containsExactly("Claude token");
+    }
+
+    @Test
+    @DisplayName("Streaming returns false when API key is missing for providers that require key")
+    void testStreamMissingApiKeyReturnsFalse() {
+        List<String> tokens = new ArrayList<>();
+        boolean streamed = client.streamInference(config(ModelProvider.GEMINI, "gemini-2.5-flash", baseUrl),
+                "", "system", "question", tokens::add);
+
+        assertThat(streamed).isFalse();
+        assertThat(tokens).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Streaming returns false on HTTP error response from upstream")
+    void testStreamHttpErrorReturnsFalse() {
+        status.set(500);
+        List<String> tokens = new ArrayList<>();
+        boolean streamed = client.streamInference(config(ModelProvider.OLLAMA_LOCAL, "llama3.2", baseUrl),
+                "", "system", "question", tokens::add);
+
+        assertThat(streamed).isFalse();
+        assertThat(tokens).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Streaming handles ChatStreamCancelledException when consumer aborts")
+    void testStreamClientCancelled() {
+        boolean streamed = client.streamInference(config(ModelProvider.OLLAMA_LOCAL, "llama3.2", baseUrl),
+                "", "system", "question", token -> {
+                    throw new ChatStreamCancelledException();
+                });
+
+        assertThat(streamed).isFalse();
     }
 
     @Test
@@ -208,7 +364,6 @@ class LlmClientServiceTest {
             assertThat(streamed).isFalse();
             assertThat(tokens).containsExactly("Olá");
             assertThat(elapsed).isLessThan(Duration.ofSeconds(5));
-            // The watchdog interrupt does not leak into the work that follows on the same thread
             assertThat(Thread.currentThread().isInterrupted()).isFalse();
         } finally {
             watchdogClient.shutdownWatchdog();

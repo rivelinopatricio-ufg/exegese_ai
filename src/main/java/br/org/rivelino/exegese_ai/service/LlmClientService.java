@@ -342,7 +342,7 @@ public class LlmClientService {
         return hasEmitted.get();
     }
 
-    private void parseGeminiDataChunk(String data, Consumer<String> tokenConsumer, AtomicBoolean hasEmitted) {
+    void parseGeminiDataChunk(String data, Consumer<String> tokenConsumer, AtomicBoolean hasEmitted) {
         JsonNode root;
         try {
             root = objectMapper.readTree(data);
@@ -506,7 +506,7 @@ public class LlmClientService {
         return hasEmitted.get();
     }
 
-    private void parseClaudeDataChunk(String data, Consumer<String> tokenConsumer, AtomicBoolean hasEmitted) {
+    void parseClaudeDataChunk(String data, Consumer<String> tokenConsumer, AtomicBoolean hasEmitted) {
         JsonNode root;
         try {
             root = objectMapper.readTree(data);

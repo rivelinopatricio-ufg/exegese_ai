@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exegese AI — Gestão de Usuários & Controle de Acesso</title>
+    <link rel="icon" type="image/png" href="images/logo.png">
+    <link rel="stylesheet" href="css/app.css">
+    <link rel="stylesheet" href="css/tailwind.css">
+</head>
+<body class="bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-slate-100 min-h-screen p-4 md:p-8 transition-colors">
+
+    <!-- Top Admin Header -->
+    <header class="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 mb-8 pb-5 border-b border-slate-300 dark:border-slate-800">
+        <!-- Brand & Logo -->
+        <div class="flex items-center gap-3.5">
+            <a href="#" class="flex items-center gap-3 group">
+                <div class="w-11 h-11 rounded-xl overflow-hidden shadow-lg shadow-sky-950/50 border border-sky-500/30 bg-slate-900 shrink-0">
+                    <img src="images/logo.png" alt="Exegese AI Logo" class="w-full h-full object-cover">
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-xl font-bold tracking-tight text-slate-900 dark:text-white group-hover:text-sky-500 transition">Exegese AI</span>
+                        <span class="text-[11px] font-semibold text-sky-600 dark:text-sky-400 px-2 py-0.5 rounded-full bg-sky-100 dark:bg-sky-950 border border-sky-200 dark:border-sky-800">Painel Admin</span>
+                    </div>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">Governança, Acervos Normativos e Modelos de IA</p>
+                </div>
+            </a>
+        </div>
+
+        <!-- Action Bar: Voltar / Home Button + Navigation Tabs + Sair -->
+        <div class="flex flex-wrap items-center gap-2.5">
+            <!-- Botão Voltar / Home Prominente -->
+            <a href="#" class="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium text-xs shadow-md shadow-sky-950/40 transition" title="Retornar à página inicial do chat">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                </svg>
+                <span>← Início / Chat</span>
+            </a>
+
+            <!-- Submenu / Abas de Navegação Administrativa -->
+            <nav class="flex items-center bg-white dark:bg-slate-800 p-1 rounded-lg border border-slate-300 dark:border-slate-700 shadow-sm">
+                <a href="#users" 
+                   class="px-3 py-1.5 rounded-md text-xs font-semibold bg-sky-600 text-white shadow transition">
+                    👥 Usuários
+                </a>
+                <a href="#subjects" 
+                   class="px-3 py-1.5 rounded-md text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700/60 transition">
+                    🏷️ Assuntos
+                </a>
+                <a href="#documents" 
+                   class="px-3 py-1.5 rounded-md text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700/60 transition">
+                    📄 Documentos
+                </a>
+                <a href="#models" 
+                   class="px-3 py-1.5 rounded-md text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700/60 transition">
+                    🧠 Modelos IA
+                </a>
+            </nav>
+
+            <!-- Theme Toggle -->
+            <button type="button" class="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs transition shadow-sm" title="Alternar tema">
+                🌓
+            </button>
+
+            <!-- Sair -->
+            <a href="#" class="px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/60 text-xs font-medium transition shadow-sm">
+                Sair
+            </a>
+        </div>
+    </header>
+
+    <!-- Main Content Card -->
+    <main class="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-xl border border-slate-200 dark:border-slate-700 transition-colors">
+        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-6 pb-4 border-b border-slate-200 dark:border-slate-700/80">
+            <div>
+                <h2 class="text-xl font-bold text-slate-900 dark:text-white">Equipe e Controle de Acesso</h2>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Gestão de Usuários, Papéis de Segurança (RBAC) e Delegação de Assuntos</p>
+            </div>
+            <span class="px-2.5 py-1 rounded-md text-xs font-semibold bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                Total de Usuários: <span>4</span>
+            </span>
+        </div>
+
+        <p class="mb-4 text-xs text-slate-500 dark:text-slate-400">
+            Os assuntos ativos são públicos para todos os usuários; os vínculos garantem atribuições e governança operacional.
+        </p>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-sm">
+                <thead>
+                    <tr class="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/70 text-slate-600 dark:text-slate-400 text-xs uppercase tracking-wider font-semibold">
+                        <th class="py-3 px-4">Usuário</th>
+                        <th class="py-3 px-4">Papel Atual</th>
+                        <th class="py-3 px-4">Status</th>
+                        <th class="py-3 px-4">Alterar Papel</th>
+                        <th class="py-3 px-4">Conceder Assuntos</th>
+                        <th class="py-3 px-4 text-right">Ação</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 dark:divide-slate-700/50">
+                    <!-- User 1: Admin Rivelino -->
+                    <tr class="hover:bg-slate-50 dark:hover:bg-slate-750 transition">
+                        <td class="py-3.5 px-4">
+                            <div class="font-medium text-slate-900 dark:text-white">
+                                <span>Rivelino Patrício</span>
+                                <span class="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-sky-100 dark:bg-sky-900/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800">você</span>
+                            </div>
+                            <div class="text-xs text-slate-500 dark:text-slate-400 font-mono">rivelinopatricio@discente.ufg.br</div>
+                        </td>
+                        <td class="py-3.5 px-4">
+                            <span class="px-2.5 py-1 text-xs rounded-full bg-purple-100 text-purple-700 border border-purple-200 dark:bg-purple-900/60 dark:text-purple-200 dark:border-purple-700 font-semibold">ROLE_ADMIN</span>
+                        </td>
+                        <td class="py-3.5 px-4">
+                            <span class="px-2.5 py-1 text-xs rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/60 dark:text-emerald-200 dark:border-emerald-700 font-medium">Ativo</span>
+                        </td>
+                        <td class="py-3.5 px-4">
+                            <div class="flex gap-1.5 items-center">
+                                <select class="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-sky-500 shadow-sm">
+                                    <option value="ROLE_USER">USER</option>
+                                    <option value="ROLE_OPERATOR">OPERATOR</option>
+                                    <option value="ROLE_ADMIN" selected>ADMIN</option>
+                                </select>
+                                <button type="button" class="px-2.5 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-medium hover:bg-sky-500 shadow-sm transition">Salvar</button>
+                            </div>
+                        </td>
+                        <td class="py-3.5 px-4">
+                            <div class="flex gap-1.5 items-center">
+                                <select class="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-800 dark:text-slate-200 max-w-[150px] focus:outline-none focus:border-sky-500 shadow-sm">
+                                    <option>Tributário IRPF</option>
+                                    <option>Legislação Federal</option>
+                                </select>
+                                <select class="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-sky-500 shadow-sm">
+                                    <option>Gerenciamento</option>
+                                    <option>Escrita</option>
+                                    <option>Leitura</option>
+                                </select>
+                                <button type="button" class="px-2.5 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-500 shadow-sm transition">Vincular</button>
+                            </div>
+                            <div class="mt-2">
+                                <div class="text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">Assuntos vinculados</div>
+                                <ul class="flex flex-wrap gap-1.5">
+                                    <li class="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs">
+                                        <span>Tributário IRPF</span>
+                                        <span class="text-slate-500 dark:text-slate-400">· Gerenciamento</span>
+                                        <button class="px-1.5 rounded-full text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/60 transition">Revogar</button>
+                                    </li>
+                                </ul>
+                            </div>
+                        </td>
+                        <td class="py-3.5 px-4 text-right">
+                            <button type="button" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-medium shadow-sm transition">Suspender</button>
+                        </td>
+                    </tr>
+
+                    <!-- User 2: Operator Mariana -->
+                    <tr class="hover:bg-slate-50 dark:hover:bg-slate-750 transition">
+                        <td class="py-3.5 px-4">
+                            <div class="font-medium text-slate-900 dark:text-white">Mariana Duarte Silva</div>
+                            <div class="text-xs text-slate-500 dark:text-slate-400 font-mono">mariana.duarte@receita.gov.br</div>
+                        </td>
+                        <td class="py-3.5 px-4">
+                            <span class="px-2.5 py-1 text-xs rounded-full bg-blue-100 text-blue-700 border border-blue-200 dark:bg-blue-900/60 dark:text-blue-200 dark:border-blue-700 font-semibold">ROLE_OPERATOR</span>
+                        </td>
+                        <td class="py-3.5 px-4">
+                            <span class="px-2.5 py-1 text-xs rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/60 dark:text-emerald-200 dark:border-emerald-700 font-medium">Ativo</span>
+                        </td>
+                        <td class="py-3.5 px-4">
+                            <div class="flex gap-1.5 items-center">
+                                <select class="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-sky-500 shadow-sm">
+                                    <option value="ROLE_USER">USER</option>
+                                    <option value="ROLE_OPERATOR" selected>OPERATOR</option>
+                                    <option value="ROLE_ADMIN">ADMIN</option>
+                                </select>
+                                <button type="button" class="px-2.5 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-medium hover:bg-sky-500 shadow-sm transition">Salvar</button>
+                            </div>
+                        </td>
+                        <td class="py-3.5 px-4">
+                            <div class="flex gap-1.5 items-center">
+                                <select class="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-800 dark:text-slate-200 max-w-[150px] focus:outline-none focus:border-sky-500 shadow-sm">
+                                    <option>Tributário IRPF</option>
+                                </select>
+                                <select class="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-sky-500 shadow-sm">
+                                    <option>Escrita</option>
+                                    <option>Leitura</option>
+                                </select>
+                                <button type="button" class="px-2.5 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-500 shadow-sm transition">Vincular</button>
+                            </div>
+                            <div class="mt-2">
+                                <div class="text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">Assuntos vinculados</div>
+                                <ul class="flex flex-wrap gap-1.5">
+                                    <li class="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs">
+                                        <span>Tributário IRPF</span>
+                                        <span class="text-slate-500 dark:text-slate-400">· Escrita</span>
+                                        <button class="px-1.5 rounded-full text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/60 transition">Revogar</button>
+                                    </li>
+                                </ul>
+                            </div>
+                        </td>
+                        <td class="py-3.5 px-4 text-right">
+                            <button type="button" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-medium shadow-sm transition">Suspender</button>
+                        </td>
+                    </tr>
+
+                    <!-- User 3: User Carlos -->
+                    <tr class="hover:bg-slate-50 dark:hover:bg-slate-750 transition">
+                        <td class="py-3.5 px-4">
+                            <div class="font-medium text-slate-900 dark:text-white">Carlos Eduardo Mendes</div>
+                            <div class="text-xs text-slate-500 dark:text-slate-400 font-mono">carlos.mendes@auditoria.org.br</div>
+                        </td>
+                        <td class="py-3.5 px-4">
+                            <span class="px-2.5 py-1 text-xs rounded-full bg-slate-100 text-slate-700 border border-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600 font-semibold">ROLE_USER</span>
+                        </td>
+                        <td class="py-3.5 px-4">
+                            <span class="px-2.5 py-1 text-xs rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/60 dark:text-emerald-200 dark:border-emerald-700 font-medium">Ativo</span>
+                        </td>
+                        <td class="py-3.5 px-4">
+                            <div class="flex gap-1.5 items-center">
+                                <select class="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-sky-500 shadow-sm">
+                                    <option value="ROLE_USER" selected>USER</option>
+                                    <option value="ROLE_OPERATOR">OPERATOR</option>
+                                    <option value="ROLE_ADMIN">ADMIN</option>
+                                </select>
+                                <button type="button" class="px-2.5 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-medium hover:bg-sky-500 shadow-sm transition">Salvar</button>
+                            </div>
+                        </td>
+                        <td class="py-3.5 px-4">
+                            <div class="flex gap-1.5 items-center">
+                                <select class="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-800 dark:text-slate-200 max-w-[150px] focus:outline-none focus:border-sky-500 shadow-sm">
+                                    <option>Legislação Federal</option>
+                                </select>
+                                <select class="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-sky-500 shadow-sm">
+                                    <option>Leitura</option>
+                                </select>
+                                <button type="button" class="px-2.5 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-500 shadow-sm transition">Vincular</button>
+                            </div>
+                            <div class="mt-2">
+                                <div class="text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">Assuntos vinculados</div>
+                                <span class="text-xs text-slate-400 dark:text-slate-500">Nenhum assunto vinculado</span>
+                            </div>
+                        </td>
+                        <td class="py-3.5 px-4 text-right">
+                            <button type="button" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-medium shadow-sm transition">Suspender</button>
+                        </td>
+                    </tr>
+
+                    <!-- User 4: Suspended User Roberto -->
+                    <tr class="hover:bg-slate-50 dark:hover:bg-slate-750 transition">
+                        <td class="py-3.5 px-4">
+                            <div class="font-medium text-slate-900 dark:text-white">Roberto Alencar Lima</div>
+                            <div class="text-xs text-slate-500 dark:text-slate-400 font-mono">roberto.alencar@consultoria.com.br</div>
+                        </td>
+                        <td class="py-3.5 px-4">
+                            <span class="px-2.5 py-1 text-xs rounded-full bg-slate-100 text-slate-700 border border-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600 font-semibold">ROLE_USER</span>
+                        </td>
+                        <td class="py-3.5 px-4">
+                            <span class="px-2.5 py-1 text-xs rounded-full bg-red-100 text-red-700 border border-red-200 dark:bg-red-900/60 dark:text-red-200 dark:border-red-700 font-medium">Suspenso</span>
+                        </td>
+                        <td class="py-3.5 px-4">
+                            <div class="flex gap-1.5 items-center">
+                                <select class="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-sky-500 shadow-sm">
+                                    <option value="ROLE_USER" selected>USER</option>
+                                    <option value="ROLE_OPERATOR">OPERATOR</option>
+                                    <option value="ROLE_ADMIN">ADMIN</option>
+                                </select>
+                                <button type="button" class="px-2.5 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-medium hover:bg-sky-500 shadow-sm transition">Salvar</button>
+                            </div>
+                        </td>
+                        <td class="py-3.5 px-4">
+                            <div class="mt-2">
+                                <span class="text-xs text-slate-400 dark:text-slate-500">Acesso bloqueado</span>
+                            </div>
+                        </td>
+                        <td class="py-3.5 px-4 text-right">
+                            <button type="button" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium shadow-sm transition">Reativar</button>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+</body>
+</html>

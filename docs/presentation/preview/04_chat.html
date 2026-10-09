@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exegese AI — Assistente Regulatório & Tributário</title>
+    <link rel="icon" type="image/png" href="images/logo.png">
+    <link rel="stylesheet" href="css/app.css">
+    <link rel="stylesheet" href="css/tailwind.css">
+</head>
+<body class="bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-slate-100 h-screen flex flex-col overflow-hidden transition-colors">
+
+    <!-- Top Navigation Header -->
+    <header class="h-16 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 flex items-center justify-between px-6 shrink-0 transition-colors">
+        <!-- Brand & Official Logo -->
+        <a href="#" class="flex items-center gap-3 group">
+            <div class="w-10 h-10 rounded-xl overflow-hidden shadow-md shadow-sky-950/40 border border-sky-500/30 bg-slate-900 shrink-0">
+                <img src="images/logo.png" alt="Exegese AI Logo" class="w-full h-full object-cover">
+            </div>
+            <div>
+                <h1 class="text-base font-bold tracking-tight text-slate-900 dark:text-slate-100 group-hover:text-sky-600 dark:group-hover:text-sky-400 transition">Exegese AI</h1>
+                <p class="text-xs text-slate-500 dark:text-slate-400">RAG Regulatório com Factualidade Estrita</p>
+            </div>
+        </a>
+
+        <!-- Header Actions -->
+        <div class="flex items-center gap-3 text-sm">
+            <!-- Theme Toggle Button -->
+            <button type="button" class="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium transition flex items-center gap-1.5 shadow-sm">
+                <span>🌓</span>
+                <span>Tema</span>
+            </button>
+
+            <!-- Nova Conversa -->
+            <button type="button" class="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium text-xs transition shadow-sm">
+                + Nova Conversa
+            </button>
+
+            <!-- Painel Admin -->
+            <a href="#admin" class="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:text-sky-600 dark:hover:text-sky-400 text-slate-700 dark:text-slate-300 text-xs font-medium transition shadow-sm">
+                Painel Admin
+            </a>
+
+            <!-- Sair -->
+            <a href="#logout" class="px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/60 text-xs font-medium transition">
+                Sair
+            </a>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <div class="flex-1 flex overflow-hidden">
+
+        <!-- Sidebar: Histórico e Filtro de Assuntos -->
+        <aside class="w-80 border-r border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex flex-col shrink-0 transition-colors">
+            <!-- Filtro de Assuntos -->
+            <div class="p-4 border-b border-slate-200 dark:border-slate-800">
+                <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-3">
+                    Assuntos Selecionados
+                </h2>
+                <div class="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    <label class="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white cursor-pointer select-none">
+                        <input type="checkbox" checked class="rounded bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-sky-600 focus:ring-0">
+                        <span class="truncate font-medium">Tributário IRPF</span>
+                    </label>
+                    <label class="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white cursor-pointer select-none">
+                        <input type="checkbox" checked class="rounded bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-sky-600 focus:ring-0">
+                        <span class="truncate font-medium">Legislação Federal</span>
+                    </label>
+                    <label class="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white cursor-pointer select-none">
+                        <input type="checkbox" class="rounded bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-sky-600 focus:ring-0">
+                        <span class="truncate">Processo Administrativo Fiscal</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Sessões Recentes -->
+            <div class="flex-1 p-4 overflow-y-auto">
+                <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-3">
+                    Histórico de Conversas
+                </h2>
+                <div class="space-y-1.5">
+                    <!-- Session Active -->
+                    <div class="group flex items-center justify-between rounded-lg px-2.5 py-2 text-xs transition bg-sky-100 text-sky-900 dark:bg-slate-800 dark:text-sky-300 font-semibold shadow-sm">
+                        <div class="flex-1 min-w-0 flex items-center gap-2 truncate">
+                            <span class="shrink-0">💬</span>
+                            <span class="truncate">Dedução de instrução IRPF 2026</span>
+                        </div>
+                    </div>
+                    <!-- Other Sessions -->
+                    <div class="group flex items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition text-slate-600 hover:bg-slate-200/60 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-slate-200">
+                        <div class="flex-1 min-w-0 flex items-center gap-2 truncate">
+                            <span class="shrink-0 opacity-70">💬</span>
+                            <span class="truncate">Carnê-leão e rendimentos no exterior</span>
+                        </div>
+                    </div>
+                    <div class="group flex items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition text-slate-600 hover:bg-slate-200/60 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-slate-200">
+                        <div class="flex-1 min-w-0 flex items-center gap-2 truncate">
+                            <span class="shrink-0 opacity-70">💬</span>
+                            <span class="truncate">Ganho de capital com criptoativos</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Usuário Conectado -->
+            <div class="p-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                <div class="flex items-center gap-2">
+                    <div class="w-6 h-6 rounded-full bg-sky-600 text-white flex items-center justify-center font-bold text-[10px]">RP</div>
+                    <span class="font-medium text-slate-800 dark:text-slate-200">Rivelino Patrício</span>
+                </div>
+                <span class="px-2 py-0.5 rounded bg-purple-100 text-purple-700 dark:bg-purple-900/60 dark:text-purple-200 font-mono text-[10px] font-semibold">ROLE_ADMIN</span>
+            </div>
+        </aside>
+
+        <!-- Chat Conversation Area -->
+        <main class="flex-1 flex flex-col bg-slate-100/70 dark:bg-slate-900 overflow-hidden relative transition-colors">
+
+            <!-- Chat Session Header Bar -->
+            <div class="h-12 border-b border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-950/50 px-6 flex items-center justify-between shrink-0 backdrop-blur transition-colors">
+                <div class="flex items-center gap-2.5 min-w-0 flex-1 mr-4">
+                    <span class="text-slate-400 dark:text-slate-500 text-sm shrink-0">💬</span>
+                    <h2 class="text-sm font-semibold text-slate-800 dark:text-slate-200 truncate">Dedução de instrução no IRPF 2026</h2>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                    <span class="px-2 py-0.5 text-[11px] rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Grounding Ativo (0.65+)
+                    </span>
+                </div>
+            </div>
+
+            <!-- Balões de Mensagens -->
+            <div class="flex-1 overflow-y-auto p-6 space-y-6 max-w-4xl w-full mx-auto">
+                <!-- Mensagem do Usuário -->
+                <div class="flex gap-3 justify-end">
+                    <div class="rounded-2xl p-4 max-w-2xl text-sm shadow-md transition-colors bg-sky-100 border border-sky-300 text-sky-950 dark:bg-sky-950/80 dark:border-sky-800 dark:text-sky-100">
+                        <div class="font-semibold text-xs mb-1 opacity-70">Você</div>
+                        <div class="whitespace-pre-wrap leading-relaxed">Quais são os limites e condições legais para dedução de despesas com instrução própria e de dependentes na Declaração de Ajuste Anual do IRPF 2026?</div>
+                    </div>
+                </div>
+
+                <!-- Mensagem da IA Exegese AI -->
+                <div class="flex gap-3 justify-start">
+                    <div class="rounded-2xl p-4 max-w-2xl text-sm shadow-md transition-colors bg-white border border-slate-200 text-slate-800 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="font-semibold text-xs text-sky-600 dark:text-sky-400 flex items-center gap-1.5">
+                                <span class="w-2 h-2 rounded-full bg-sky-500"></span>
+                                Exegese AI (Rigor Regulatório)
+                            </div>
+                            <span class="text-[10px] text-slate-400 font-mono">Modelo: GEMINI-2.5-FLASH</span>
+                        </div>
+
+                        <div class="leading-relaxed space-y-3">
+                            <p>Com base estrita nas normas oficiais da Secretaria Especial da Receita Federal do Brasil (RFB) e na Lei nº 9.250/1995:</p>
+                            
+                            <div>
+                                <h4 class="font-bold text-slate-900 dark:text-white">1. Limite Individual Anual</h4>
+                                <p class="text-slate-700 dark:text-slate-300 text-xs mt-0.5">
+                                    O limite anual individual para dedução de despesas com instrução é de <strong>R$ 3.561,50</strong> para o declarante e para cada dependente ou alimentando com decisão judicial transitada em julgado.
+                                </p>
+                            </div>
+
+                            <div>
+                                <h4 class="font-bold text-slate-900 dark:text-white">2. Despesas Admitidas como Dedutíveis</h4>
+                                <ul class="list-disc list-inside text-xs space-y-1 text-slate-700 dark:text-slate-300">
+                                    <li>Educação infantil (creches e pré-escolas);</li>
+                                    <li>Ensino fundamental e médio regular;</li>
+                                    <li>Educação superior (graduação, pós-graduação, mestrado, doutorado e especializações);</li>
+                                    <li>Educação profissional técnica e tecnológica.</li>
+                                </ul>
+                            </div>
+
+                            <div>
+                                <h4 class="font-bold text-slate-900 dark:text-white">3. Despesas Expressamente Não Dedutíveis</h4>
+                                <ul class="list-disc list-inside text-xs space-y-1 text-slate-700 dark:text-slate-300">
+                                    <li>Cursos livres, idiomas, esportes ou preparatórios para concursos públicos;</li>
+                                    <li>Material escolar, livros didáticos, uniformes e transporte escolar.</li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        <!-- Citações Canônicas em Chips -->
+                        <div class="mt-4 pt-3 border-t border-slate-200 dark:border-slate-700/60">
+                            <span class="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 block mb-2">Fontes Canônicas Grounded:</span>
+                            <div class="flex flex-wrap gap-2">
+                                <button type="button" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-50 dark:bg-sky-950/60 border border-sky-300 dark:border-sky-800 text-sky-800 dark:text-sky-200 text-xs font-medium hover:bg-sky-100 dark:hover:bg-sky-900 transition shadow-sm cursor-pointer">
+                                    <span>📜</span>
+                                    <span>Manual IRPF 2026 — Pergunta nº 368</span>
+                                    <span class="text-[10px] bg-sky-200 dark:bg-sky-900 px-1 rounded font-mono">p. 142</span>
+                                </button>
+                                <button type="button" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-50 dark:bg-sky-950/60 border border-sky-300 dark:border-sky-800 text-sky-800 dark:text-sky-200 text-xs font-medium hover:bg-sky-100 dark:hover:bg-sky-900 transition shadow-sm cursor-pointer">
+                                    <span>⚖️</span>
+                                    <span>Lei nº 9.250/1995 — Artigo 8º, II, "b"</span>
+                                    <span class="text-[10px] bg-sky-200 dark:bg-sky-900 px-1 rounded font-mono">Dedução</span>
+                                </button>
+                                <button type="button" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-50 dark:bg-sky-950/60 border border-sky-300 dark:border-sky-800 text-sky-800 dark:text-sky-200 text-xs font-medium hover:bg-sky-100 dark:hover:bg-sky-900 transition shadow-sm cursor-pointer">
+                                    <span>📘</span>
+                                    <span>IN RFB nº 2178/2024 — Seção IV</span>
+                                    <span class="text-[10px] bg-sky-200 dark:bg-sky-900 px-1 rounded font-mono">Art. 19</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Formulário de Envio -->
+            <div class="p-4 border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/60 backdrop-blur transition-colors">
+                <form class="max-w-4xl mx-auto flex gap-3">
+                    <input type="text"
+                           placeholder="Faça sua pergunta tributária ou regulatória ancorada em fontes oficiais..."
+                           class="flex-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-inner transition-colors">
+                    <button type="button"
+                            class="px-5 py-3 bg-sky-600 hover:bg-sky-500 text-white font-medium text-sm rounded-xl transition shadow-lg shadow-sky-950/40 flex items-center gap-2">
+                        <span>Enviar</span>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                        </svg>
+                    </button>
+                </form>
+            </div>
+        </main>
+    </div>
+</body>
+</html>

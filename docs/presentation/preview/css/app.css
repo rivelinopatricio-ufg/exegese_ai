@@ -1,0 +1,112 @@
+/* Exegese AI — Design System & Custom Properties */
+:root {
+  --color-primary: #1e3a8a;
+  --color-primary-hover: #1d4ed8;
+  --color-accent: #2563eb;
+  --color-bg: #f8fafc;
+  --color-surface: #ffffff;
+  --color-surface-user: #eff6ff;
+  --color-text-main: #0f172a;
+  --color-text-muted: #64748b;
+  --color-border: #e2e8f0;
+  --color-citation-bg: #e0f2fe;
+  --color-citation-text: #0369a1;
+  --color-citation-border: #bae6fd;
+}
+
+.dark {
+  --color-primary: #3b82f6;
+  --color-primary-hover: #60a5fa;
+  --color-accent: #38bdf8;
+  --color-bg: #0b1120;
+  --color-surface: #1e293b;
+  --color-surface-user: #172554;
+  --color-text-main: #f1f5f9;
+  --color-text-muted: #94a3b8;
+  --color-border: #334155;
+  --color-citation-bg: #082f49;
+  --color-citation-text: #7dd3fc;
+  --color-citation-border: #0369a1;
+}
+
+/* Base resets & typography */
+html, body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-bg);
+  color: var(--color-text-main);
+  line-height: 1.6;
+  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 9999px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(51, 65, 85, 0.6);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+}
+
+/* Streaming Cursor Animation */
+.cursor-blink {
+  display: inline-block;
+  width: 7px;
+  height: 15px;
+  background-color: var(--color-accent);
+  margin-left: 3px;
+  vertical-align: middle;
+  animation: blink 0.8s infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Citation Chip */
+.citation-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 9999px;
+  background-color: var(--color-citation-bg);
+  color: var(--color-citation-text);
+  border: 1px solid var(--color-citation-border);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.citation-chip:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+/* Modal Dialog */
+.modal-backdrop {
+  background-color: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(4px);
+}
+
+/* Smooth transition for theme switching */
+header, aside, main, div, button, input, select, textarea, table, tr, th, td {
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}

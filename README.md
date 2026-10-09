@@ -8,8 +8,11 @@
 [![Tests](https://img.shields.io/badge/Tests-205%20%28JUnit%20%2B%20Testcontainers%29-brightgreen.svg)](#7-suíte-de-testes-automatizados)
 [![i18n](https://img.shields.io/badge/i18n-pt--BR%20%7C%20en--US%20%7C%20es--ES-blueviolet.svg)](#1-destaques-e-proposta-de-valor)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Apresentação](https://img.shields.io/badge/Apresentação-Fluxos%20Operacionais-0284c7.svg)](docs/presentation/APRESENTACAO_FLUXOS_EXEGESE_AI.md)
 
 > **Exegese AI** é uma plataforma corporativa e institucional de Recuperação Aumentada por Geração (**RAG — Retrieval-Augmented Generation**) projetada especificamente para cenários onde a precisão documental, o rigor exegético e a fundamentação normativa são requisitos intransigíveis.
+
+> 🖥️ **Apresentação Operacional dos Fluxos com Prints**: Explore a demonstração visual e interativa de todas as páginas da aplicação (Login Federado, Gestão e Habilitação RBAC de Usuários, Upload e Indexação de Documentos, Consultas via Chat e Auditoria Canônica) na [**Apresentação Interativa em Slides**](docs/presentation/index.html) ou no documento [**APRESENTACAO_FLUXOS_EXEGESE_AI.md**](docs/presentation/APRESENTACAO_FLUXOS_EXEGESE_AI.md).
 
 > 🤖 **Projeto desenvolvido integralmente por Inteligência Artificial.** Todas as etapas foram realizadas por IA: a concepção do prompt inicial, a execução (código, infraestrutura e documentação), os casos de teste, as revisões de código e a auditoria de qualidade e segurança (ver [seção 10](#10-auditoria-técnica-e-de-segurança-assistida-por-ia)). Foram usadas as LLMs **Gemini Flash 3.8** e **Claude Opus 5.5**. O Claude Opus 5.5 foi usado tanto pela extensão **Claude Code** na IDE **Google Antigravity** quanto pela versão em nuvem do Claude Code. A IDE utilizada no desenvolvimento foi o **Google Antigravity**.
 
@@ -145,6 +148,7 @@ Após a inicialização do SWAG e o healthcheck da aplicação, acesse:
 - **Gestão de Usuários**: `https://${SERVER_NAME}:${HTTPS_PORT}/admin/users`
 - **Gestão de Provedores AI**: `https://${SERVER_NAME}:${HTTPS_PORT}/admin/models`
 - **Saúde e Diagnóstico**: `https://${SERVER_NAME}:${HTTPS_PORT}/actuator/health`
+- **Apresentação Visual dos Fluxos (Slides & Prints)**: [Slide Deck Interativo](docs/presentation/index.html) / [Guia Documentado](docs/presentation/APRESENTACAO_FLUXOS_EXEGESE_AI.md)
 
 ### 3.3. Configuração de Firewall no Host (Padrão Ubuntu - UFW)
 
@@ -211,53 +215,6 @@ O `ollama_init.sh` aguarda o servidor e baixa `OLLAMA_CHAT_MODEL` (padrão `llam
   variável, é montado o modelo versionado `docker/proxy/config/default` (portas 80/443). O instalador nunca altera o arquivo versionado.
 - **Keystore de desenvolvimento**: `src/main/resources/cert.p12` é só para rodar no Eclipse; fica fora do JAR (`maven-jar-plugin`) e do
   contexto Docker (`.dockerignore`). Em produção o TLS termina no SWAG.
-
-### 3.6. Atualização de Instalações Existentes
-Instalações feitas antes desta versão usavam uma chave AES fixa no código, uma senha pública do PostgreSQL e publicavam as portas
-5432 (PostgreSQL) e 11434 (Ollama) em todas as interfaces. **Considere expostos os segredos dessas instalações** e siga, em ordem:
-
-1. **Rotacione as credenciais externas**: gere novas chaves de API de todos os provedores de LLM usados (Gemini, OpenAI, Anthropic,
-   Cerebras, NVIDIA, DeepSeek) e um novo *client secret* do Google OAuth2 no Google Cloud Console. Revogue as antigas.
-2. **Feche as portas 5432 e 11434** no firewall do host e no *security group* / lista de segurança da nuvem. O novo `docker-compose.yml`
-   já não as publica, mas a regra de nuvem antiga deve ser removida. Confira com `sudo ss -tlnp` e um `nmap` externo: só 80/443.
-3. **Atualize o código e reaproveite o `.env`**:
-   ```bash
-   git checkout -- docker/proxy/config/default && git pull && ./install.sh
-   ```
-   O `git checkout` descarta apenas a cópia de `docker/proxy/config/default` que o instalador antigo reescrevia a cada execução (sem ele,
-   o `git pull` aborta com *"Your local changes ... would be overwritten"*); o novo `install.sh` gera o site em
-   `docker/proxy/config/site.conf`, fora do controle de versão, com as portas configuradas. Mantendo o `.env` atual ou reconfigurando-o, o instalador **preserva**
-   `POSTGRES_USER`, `POSTGRES_PASSWORD` e `EXEGESE_AES_SECRET` já gravados (o volume `pgdata` não aceita novas credenciais),
-   completa o que faltar e exige `INITIAL_ADMIN_EMAIL` (o antigo padrão `admin@exegese.ai` é recusado).
-4. **Defina `EXEGESE_AES_SECRET`** (Base64 de 32 bytes: `openssl rand -base64 32`) se o `.env` ainda não tiver um valor válido. A aplicação
-   não sobe sem ela. Na inicialização, as chaves de API cifradas com a antiga chave fixa são **migradas automaticamente** para a nova
-   chave (formato `v1:`); o log lista apenas os provedores migrados. Guarde essa chave com backup: sem ela, as chaves de API salvas no
-   banco ficam ilegíveis.
-5. **Troque a senha do PostgreSQL** (o volume já inicializado mantém a senha antiga) e atualize o `.env`:
-   ```bash
-   NEW_PASS=$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32)
-   docker compose exec postgres psql -U "$POSTGRES_USER" -d "${POSTGRES_DB:-exegese_db}" \
-     -c "ALTER USER \"$POSTGRES_USER\" WITH PASSWORD '$NEW_PASS';"
-   sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$NEW_PASS/" .env
-   docker compose up -d    # recria a aplicação com a nova senha
-   ```
-   (carregue as variáveis antes com `set -a; . ./.env; set +a`).
-6. **Cadastre as novas chaves de API** em `/admin/models` (ou no `.env`) e use **Ping** para validá-las.
-7. **Reindexe os embeddings**: com a `GEMINI_API_KEY` configurada, abra `/admin/documents` e clique em **Reindexar embeddings**. Os documentos
-   indexados antes desta versão têm vetores zerados ou nulos; a reindexação recalcula os vetores (`gemini-embedding-001`, 768 dimensões)
-   a partir do texto já gravado, sem reenviar os PDFs. Documentos que ficaram `FAILED` por erro de embedding (por exemplo,
-   HTTP 429 de cota do Gemini) podem ser reprocessados com o botão **Reprocessar**, sem novo upload.
-
-**Embeddings e cota do Gemini.** A ingestão indexa o documento para busca textual na hora (status `INDEXED`); os embeddings
-são gerados depois, em segundo plano, num ritmo limitado por `EMBEDDING_REQUESTS_PER_MINUTE` (padrão 90 textos/min) e
-`EMBEDDING_TOKENS_PER_MINUTE` (padrão 25 000 tokens/min, estimados como caracteres ÷ 4), pensados para a camada gratuita.
-Se o Gemini recusar por cota (HTTP 429), o job espera (o tempo sugerido pela API ou um backoff de até 5 min) e tenta o mesmo
-lote de novo; se a cota continuar esgotada por 30 min (típico do limite diário), ele pausa e retoma sozinho a cada 15 min.
-Nenhum documento falha por cota. O painel `/admin/documents` mostra o progresso por documento ("Busca semântica: X de Y
-trechos") e o estado do job. Em conta paga, aumente os dois limites no `.env` para acelerar.
-
-O esquema do banco é migrado automaticamente pelo Flyway na primeira inicialização (baseline na versão 1 e migrações V2+ idempotentes).
-O relatório completo da auditoria está em [`docs/SEGURANCA_AUDITORIA_2026-10.md`](docs/SEGURANCA_AUDITORIA_2026-10.md).
 
 ---
 
@@ -495,13 +452,16 @@ A plataforma aplica estratégias customizadas de segmentação dependendo da tax
 [Indexação PostgreSQL + pgvector (HNSW) e Textual (GIN)]
 ```
 
+### Geração de Embeddings em Segundo Plano e Controle de Cotas
+A ingestão indexa o documento para busca textual imediatamente (status `INDEXED`); os embeddings vetoriais são gerados em segundo plano, com ritmo limitado por `EMBEDDING_REQUESTS_PER_MINUTE` (padrão 90 textos/min) e `EMBEDDING_TOKENS_PER_MINUTE` (padrão 25.000 tokens/min), pensados para a camada gratuita do Google Gemini. Se o Gemini recusar por cota (HTTP 429), o job aguarda o tempo sugerido pela API ou um backoff automático de até 5 minutos e tenta o lote novamente; caso a cota continue esgotada, ele pausa e retoma sozinho periodicamente, garantindo que nenhum documento falhe por exaustão de cota. O painel `/admin/documents` exibe o progresso em tempo real e permite reindexação ou reprocessamento quando necessário.
+
 ---
 
 ## 10. Auditoria Técnica e de Segurança Assistida por IA
 
 O assistente de IA Claude Code, atuando como analista sênior de Java, Spring Boot e Docker, revisou todo o repositório e identificou falhas técnicas e de segurança, corrigidas no PR #1. Entre elas estavam: a chave AES-256 das API keys fixa no código (a variável gerada pelo instalador nunca chegava à aplicação); o PostgreSQL exposto com senha padrão conhecida; o acesso de qualquer usuário às conversas de outros (IDOR); contas desativadas que continuavam com acesso; um limite de requisições que podia ser burlado; o risco de esgotamento de recursos no chat; uma CSP com `unsafe-inline` e CDN de desenvolvimento; e uma busca vetorial que, na prática, operava com embeddings zerados. Também foram atualizadas dependências e configurações de build e de contêiner. As correções foram implementadas em etapas, cada uma com testes automatizados, e depois passaram por revisão com verificação adversarial de cada achado. A IA também diagnosticou e corrigiu um efeito colateral visto em produção: o erro HTTP 429 de cota do Gemini na ingestão de documentos grandes. A solução passou a gerar os embeddings em segundo plano, com controle de ritmo, espera e retomada automáticas. O detalhamento está em [`docs/SEGURANCA_AUDITORIA_2026-10.md`](docs/SEGURANCA_AUDITORIA_2026-10.md).
 
-As decisões de produto ficaram com o mantenedor: assuntos públicos, embeddings Gemini, uso do `cert.p12` apenas em desenvolvimento e geração das credenciais do Postgres pelo instalador. O ambiente da IA tinha apenas JDK 21 e não tinha Docker, por isso o build da imagem e os testes com PostgreSQL/pgvector são validados no CI. Ações operacionais em instalações existentes, como a rotação de chaves e o fechamento de portas, cabem aos administradores (ver seção 3.6).
+As decisões de produto ficaram com o mantenedor: assuntos públicos, embeddings Gemini, uso do `cert.p12` apenas em desenvolvimento e geração das credenciais do Postgres pelo instalador. O ambiente da IA tinha apenas JDK 21 e não tinha Docker, por isso o build da imagem e os testes com PostgreSQL/pgvector são validados no CI. O relatório completo da auditoria está em [`docs/SEGURANCA_AUDITORIA_2026-10.md`](docs/SEGURANCA_AUDITORIA_2026-10.md).
 
 ---
 

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exegese AI — Auditoria de Citação Canônica</title>
+    <link rel="icon" type="image/png" href="images/logo.png">
+    <link rel="stylesheet" href="css/app.css">
+    <link rel="stylesheet" href="css/tailwind.css">
+</head>
+<body class="bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-slate-100 h-screen flex flex-col overflow-hidden transition-colors relative">
+
+    <!-- Fundo embaçado do Chat (Simulando Modal Ativo) -->
+    <header class="h-16 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 flex items-center justify-between px-6 shrink-0 filter blur-[1px]">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl overflow-hidden shadow-md border border-sky-500/30 bg-slate-900 shrink-0">
+                <img src="images/logo.png" alt="Exegese AI Logo" class="w-full h-full object-cover">
+            </div>
+            <div>
+                <h1 class="text-base font-bold text-slate-900 dark:text-slate-100">Exegese AI</h1>
+                <p class="text-xs text-slate-500">RAG Regulatório com Factualidade Estrita</p>
+            </div>
+        </div>
+        <div class="flex items-center gap-3">
+            <span class="px-3 py-1.5 rounded-lg bg-sky-600 text-white text-xs">+ Nova Conversa</span>
+        </div>
+    </header>
+
+    <div class="flex-1 flex overflow-hidden filter blur-[1px]">
+        <aside class="w-80 border-r border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-4">
+            <h2 class="text-xs font-semibold uppercase text-slate-500 mb-3">Assuntos Selecionados</h2>
+            <div class="text-xs text-slate-400">Tributário IRPF</div>
+        </aside>
+        <main class="flex-1 bg-slate-100/70 dark:bg-slate-900 p-6">
+            <div class="bg-white dark:bg-slate-800 rounded-2xl p-4 max-w-2xl text-sm">
+                Conteúdo do chat em segundo plano...
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal de Detalhamento da Citação Canônica (Ativo e Focado) -->
+    <div class="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl max-w-xl w-full p-6 shadow-2xl transition-colors ring-1 ring-sky-500/30">
+            <!-- Modal Header -->
+            <div class="flex justify-between items-start mb-4 pb-3 border-b border-slate-200 dark:border-slate-700">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-sky-500/20 text-sky-400 flex items-center justify-center text-base border border-sky-500/30">
+                        📜
+                    </div>
+                    <div>
+                        <h3 class="text-base font-bold text-slate-900 dark:text-white">Fonte Canônica e Grounding Normativo</h3>
+                        <p class="text-xs text-slate-500 dark:text-slate-400">Auditabilidade e proveniência estrita do trecho indexado</p>
+                    </div>
+                </div>
+                <button type="button" class="text-slate-400 hover:text-slate-700 dark:hover:text-white text-lg">✕</button>
+            </div>
+
+            <!-- Modal Body Details -->
+            <div class="space-y-4 text-sm text-slate-700 dark:text-slate-300">
+                <div class="grid grid-cols-2 gap-3 bg-slate-50 dark:bg-slate-900/60 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
+                    <div>
+                        <span class="block text-slate-400 uppercase text-[10px] font-bold tracking-wider">Documento Oficial</span>
+                        <span class="font-medium text-slate-900 dark:text-slate-100">Manual IRPF 2026 - P&R (RFB)</span>
+                    </div>
+                    <div>
+                        <span class="block text-slate-400 uppercase text-[10px] font-bold tracking-wider">Localização Canônica</span>
+                        <span class="font-medium text-slate-900 dark:text-slate-100">Pergunta nº 368 · Página 142</span>
+                    </div>
+                    <div>
+                        <span class="block text-slate-400 uppercase text-[10px] font-bold tracking-wider">Base Legal / Normativa</span>
+                        <span class="font-medium text-sky-600 dark:text-sky-400">Lei nº 9.250/1995, art. 8º, II, 'b'</span>
+                    </div>
+                    <div>
+                        <span class="block text-slate-400 uppercase text-[10px] font-bold tracking-wider">Score Semântico</span>
+                        <span class="font-mono text-emerald-600 dark:text-emerald-400 font-bold">0.892 (Cosine Similarity)</span>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">Trecho Exato do Documento Indexado (Chunk)</label>
+                    <div class="p-4 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 text-xs leading-relaxed text-slate-800 dark:text-slate-200 font-serif max-h-48 overflow-y-auto">
+                        "O limite anual individual para a dedução das despesas com instrução realizadas pelo contribuinte e por seus dependentes ou alimentandos na Declaração de Ajuste Anual é de R$ 3.561,50. Não são dedutíveis os gastos com cursos de idiomas, artes, material escolar, uniforme e transporte. A comprovação faz-se mediante recibos ou notas fiscais emitidos pelos estabelecimentos de ensino legalmente autorizados."
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700/60">
+                    <span class="font-mono">Hash SHA-256: 7f8a9b2c3d4e5f6a1b2c3d4e5f6a7b8c...</span>
+                    <span class="text-emerald-600 dark:text-emerald-400 font-medium">✓ 100% Grounded</span>
+                </div>
+            </div>
+
+            <!-- Modal Footer -->
+            <div class="mt-6 flex justify-end gap-2">
+                <button type="button" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 rounded-lg text-xs font-medium transition">
+                    Fechar
+                </button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

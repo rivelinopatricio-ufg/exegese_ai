@@ -36,8 +36,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ExegeseAiApplicationTests {
 
     @Test
-    @DisplayName("Context loads successfully in test profile")
+    @DisplayName("Context loads successfully in test profile and main class can be instantiated")
     void contextLoads() {
-        assertThat(ExegeseAiApplication.class).isNotNull();
+        ExegeseAiApplication app = new ExegeseAiApplication();
+        assertThat(app).isNotNull();
     }
 }

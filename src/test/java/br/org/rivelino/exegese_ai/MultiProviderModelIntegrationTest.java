@@ -49,7 +49,7 @@ import br.org.rivelino.exegese_ai.service.LlmProviderRouter;
  *
  * @author Rivelino Patrício
  */
-@SpringBootTest
+@SpringBootTest(properties = {"GEMINI_API_KEY=test-gemini-chat-key", "exegese.gemini.api-key=test-gemini-chat-key"})
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Transactional
