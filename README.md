@@ -455,7 +455,7 @@ Propriedades de segurança relacionadas: `exegese.security.allowed-email-domains
 Além das variáveis de ambiente (`.env`), a aplicação suporta nativamente o arquivo externo `app_config` ou `app_config.properties` localizado no diretório raiz da aplicação ou em `./config/`:
 - **Sobrescrita Automática**: Quaisquer propriedades definidas neste arquivo sobrescrevem as chaves padrão do `application.properties`.
 - **Formato**: Formato padrão Java Properties (`chave=valor`).
-- **Segurança e Versionamento**: s padrãos `app_config*` consta no `.gitignore` e `.dockerignore`, garantindo que parâmetros e credenciais locais jamais sejam versionados no Git ou empacotados em contêineres Docker.
+- **Segurança e Versionamento**: Os padrões `app_config*` constam no `.gitignore` e `.dockerignore`, garantindo que parâmetros e credenciais locais jamais sejam versionados no Git ou empacotados em contêineres Docker.
 
 ---
 
@@ -505,7 +505,16 @@ As decisões de produto ficaram com o mantenedor: assuntos públicos, embeddings
 
 ---
 
-## 11. Licença e Autoria
+## 11. Limitações Conhecidas
+
+- **Dependência de Conectividade Externa**: Com exceção do provedor *Ollama Local*, as respostas do pipeline RAG dependem de conectividade de rede ativa com as APIs dos provedores de nuvem (Google Gemini, Anthropic Claude, OpenAI, Cerebras, NVIDIA Nemotron, DeepSeek).
+- **Cotas e Taxas de Provedores Gratuitos**: O ritmo de embeddings e geração respeita limites da camada gratuita do Google Gemini (configurado por padrão em 90 requisições/min e 25.000 tokens/min); coleções documentais muito extensas podem demandar pausas automáticas de cota (HTTP 429) ou upgrade para planos com cota comercial.
+- **Tamanho Máximo de Arquivos**: O upload multipart de documentos PDF está parametrizado para o limite máximo de 50MB por arquivo (alinhado harmonicamente entre o proxy NGINX/SWAG, o servidor Tomcat e a aplicação Spring Boot).
+- **Arquitetura de Nó Único (*Single-Node Deployment*)**: A composição de contêineres do `docker-compose.yml` foi concebida para implantação em nó único (servidor bare-metal dedicado ou máquina virtual em nuvem), não integrando orquestração distribuída multi-nó ou autoscaling horizontal via Kubernetes.
+
+---
+
+## 12. Licença e Autoria
 
 Este projeto é software livre licenciado sob os termos da [Licença MIT](LICENSE).
 
