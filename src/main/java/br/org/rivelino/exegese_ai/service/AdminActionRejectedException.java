@@ -27,7 +27,9 @@ package br.org.rivelino.exegese_ai.service;
  */
 public class AdminActionRejectedException extends RuntimeException {
 
-    private final String messageKey;
+	private static final long serialVersionUID = 1L;
+
+	private final String messageKey;
 
     public AdminActionRejectedException(String messageKey) {
         super(messageKey);

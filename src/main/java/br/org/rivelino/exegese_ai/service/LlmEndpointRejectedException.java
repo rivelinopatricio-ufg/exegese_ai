@@ -30,7 +30,9 @@ import br.org.rivelino.exegese_ai.domain.enums.ModelProvider;
  */
 public class LlmEndpointRejectedException extends RuntimeException {
 
-    public static final String MESSAGE_KEY = "admin.model.error.base_url_rejected";
+	private static final long serialVersionUID = 1L;
+
+	public static final String MESSAGE_KEY = "admin.model.error.base_url_rejected";
 
     private final ModelProvider provider;
     private final String reason;

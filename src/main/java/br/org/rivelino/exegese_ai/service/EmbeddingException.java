@@ -31,7 +31,9 @@ package br.org.rivelino.exegese_ai.service;
  */
 public class EmbeddingException extends RuntimeException {
 
-    private final boolean notConfigured;
+	private static final long serialVersionUID = 1L;
+
+	private final boolean notConfigured;
 
     public EmbeddingException(String message) {
         this(message, null, false);

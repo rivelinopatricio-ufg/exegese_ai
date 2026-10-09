@@ -28,7 +28,9 @@ package br.org.rivelino.exegese_ai.service;
  */
 public class GoogleIdentityMismatchException extends RuntimeException {
 
-    public GoogleIdentityMismatchException(String message) {
+	private static final long serialVersionUID = 1L;
+
+	public GoogleIdentityMismatchException(String message) {
         super(message);
     }
 }

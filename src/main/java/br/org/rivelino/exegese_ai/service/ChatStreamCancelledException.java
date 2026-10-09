@@ -27,7 +27,9 @@ package br.org.rivelino.exegese_ai.service;
  */
 public class ChatStreamCancelledException extends RuntimeException {
 
-    public ChatStreamCancelledException() {
+	private static final long serialVersionUID = 1L;
+
+	public ChatStreamCancelledException() {
         super("Chat stream cancelled by the client", null, false, false);
     }
 }

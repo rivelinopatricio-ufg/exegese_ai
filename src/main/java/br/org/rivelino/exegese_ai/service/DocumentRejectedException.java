@@ -28,7 +28,9 @@ package br.org.rivelino.exegese_ai.service;
  */
 public class DocumentRejectedException extends RuntimeException {
 
-    /**
+	private static final long serialVersionUID = 1L;
+
+	/**
      * Why the document was refused.
      */
     public enum Reason {
