@@ -5,11 +5,13 @@
 [![Spring AI](https://img.shields.io/badge/Spring%20AI-2.0.1-blue.svg)](https://spring.io/projects/spring-ai)
 [![Reverse Proxy](https://img.shields.io/badge/Proxy-SWAG%20%28NGINX%20%2B%20Certbot%20%2B%20Fail2ban%29-success.svg)](https://docs.linuxserver.io/general/swag)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17%20%2B%20pgvector-blue.svg)](https://github.com/pgvector/pgvector)
-[![Tests](https://img.shields.io/badge/Tests-181%20%28JUnit%20%2B%20Testcontainers%29-brightgreen.svg)](#7-suíte-de-testes-automatizados)
+[![Tests](https://img.shields.io/badge/Tests-205%20%28JUnit%20%2B%20Testcontainers%29-brightgreen.svg)](#7-suíte-de-testes-automatizados)
 [![i18n](https://img.shields.io/badge/i18n-pt--BR%20%7C%20en--US%20%7C%20es--ES-blueviolet.svg)](#1-destaques-e-proposta-de-valor)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > **Exegese AI** é uma plataforma corporativa e institucional de Recuperação Aumentada por Geração (**RAG — Retrieval-Augmented Generation**) projetada especificamente para cenários onde a precisão documental, o rigor exegético e a fundamentação normativa são requisitos intransigíveis.
+
+> 🤖 **Projeto desenvolvido integralmente por Inteligência Artificial.** Todas as etapas foram realizadas por IA: a concepção do prompt inicial, a execução (código, infraestrutura e documentação), os casos de teste, as revisões de código e a auditoria de qualidade e segurança (ver [seção 10](#10-auditoria-técnica-e-de-segurança-assistida-por-ia)). Foram usadas as LLMs **Gemini Flash 3.8** e **Claude Opus 5.5**. O Claude Opus 5.5 foi usado tanto pela extensão **Claude Code** na IDE **Google Antigravity** quanto pela versão em nuvem do Claude Code. A IDE utilizada no desenvolvimento foi o **Google Antigravity**.
 
 ---
 
@@ -495,7 +497,15 @@ A plataforma aplica estratégias customizadas de segmentação dependendo da tax
 
 ---
 
-## 10. Licença e Autoria
+## 10. Auditoria Técnica e de Segurança Assistida por IA
+
+O assistente de IA Claude Code, atuando como analista sênior de Java, Spring Boot e Docker, revisou todo o repositório e identificou falhas técnicas e de segurança, corrigidas no PR #1. Entre elas estavam: a chave AES-256 das API keys fixa no código (a variável gerada pelo instalador nunca chegava à aplicação); o PostgreSQL exposto com senha padrão conhecida; o acesso de qualquer usuário às conversas de outros (IDOR); contas desativadas que continuavam com acesso; um limite de requisições que podia ser burlado; o risco de esgotamento de recursos no chat; uma CSP com `unsafe-inline` e CDN de desenvolvimento; e uma busca vetorial que, na prática, operava com embeddings zerados. Também foram atualizadas dependências e configurações de build e de contêiner. As correções foram implementadas em etapas, cada uma com testes automatizados, e depois passaram por revisão com verificação adversarial de cada achado. A IA também diagnosticou e corrigiu um efeito colateral visto em produção: o erro HTTP 429 de cota do Gemini na ingestão de documentos grandes. A solução passou a gerar os embeddings em segundo plano, com controle de ritmo, espera e retomada automáticas. O detalhamento está em [`docs/SEGURANCA_AUDITORIA_2026-10.md`](docs/SEGURANCA_AUDITORIA_2026-10.md).
+
+As decisões de produto ficaram com o mantenedor: assuntos públicos, embeddings Gemini, uso do `cert.p12` apenas em desenvolvimento e geração das credenciais do Postgres pelo instalador. O ambiente da IA tinha apenas JDK 21 e não tinha Docker, por isso o build da imagem e os testes com PostgreSQL/pgvector são validados no CI. Ações operacionais em instalações existentes, como a rotação de chaves e o fechamento de portas, cabem aos administradores (ver seção 3.6).
+
+---
+
+## 11. Licença e Autoria
 
 Este projeto é software livre licenciado sob os termos da [Licença MIT](LICENSE).
 
