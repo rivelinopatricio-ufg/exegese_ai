@@ -5,11 +5,13 @@
 [![Spring AI](https://img.shields.io/badge/Spring%20AI-2.0.1-blue.svg)](https://spring.io/projects/spring-ai)
 [![Reverse Proxy](https://img.shields.io/badge/Proxy-SWAG%20%28NGINX%20%2B%20Certbot%20%2B%20Fail2ban%29-success.svg)](https://docs.linuxserver.io/general/swag)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17%20%2B%20pgvector-blue.svg)](https://github.com/pgvector/pgvector)
-[![Tests](https://img.shields.io/badge/Tests-181%20%28JUnit%20%2B%20Testcontainers%29-brightgreen.svg)](#7-suíte-de-testes-automatizados)
+[![Tests](https://img.shields.io/badge/Tests-205%20%28JUnit%20%2B%20Testcontainers%29-brightgreen.svg)](#7-suíte-de-testes-automatizados)
 [![i18n](https://img.shields.io/badge/i18n-pt--BR%20%7C%20en--US%20%7C%20es--ES-blueviolet.svg)](#1-destaques-e-proposta-de-valor)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > **Exegese AI** é uma plataforma corporativa e institucional de Recuperação Aumentada por Geração (**RAG — Retrieval-Augmented Generation**) projetada especificamente para cenários onde a precisão documental, o rigor exegético e a fundamentação normativa são requisitos intransigíveis.
+
+> 🤖 **Projeto desenvolvido integralmente por Inteligência Artificial.** Todas as etapas foram realizadas por IA: a concepção do prompt inicial, a execução (código, infraestrutura e documentação), os casos de teste, as revisões de código e a auditoria de qualidade e segurança (ver [seção 10](#10-auditoria-técnica-e-de-segurança-assistida-por-ia)). Foram usadas as LLMs **Gemini Flash 3.8** e **Claude Opus 5.5**. O Claude Opus 5.5 foi usado tanto pela extensão **Claude Code** na IDE **Google Antigravity** quanto pela versão em nuvem do Claude Code. A IDE utilizada no desenvolvimento foi o **Google Antigravity**.
 
 ---
 
