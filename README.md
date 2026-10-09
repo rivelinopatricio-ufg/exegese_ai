@@ -495,7 +495,15 @@ A plataforma aplica estratégias customizadas de segmentação dependendo da tax
 
 ---
 
-## 10. Licença e Autoria
+## 10. Auditoria Técnica e de Segurança Assistida por IA
+
+O assistente de IA Claude Code, atuando como analista sênior de Java, Spring Boot e Docker, revisou todo o repositório e identificou falhas técnicas e de segurança, corrigidas no PR #1. Entre elas estavam: a chave AES-256 das API keys fixa no código (a variável gerada pelo instalador nunca chegava à aplicação); o PostgreSQL exposto com senha padrão conhecida; o acesso de qualquer usuário às conversas de outros (IDOR); contas desativadas que continuavam com acesso; um limite de requisições que podia ser burlado; o risco de esgotamento de recursos no chat; uma CSP com `unsafe-inline` e CDN de desenvolvimento; e uma busca vetorial que, na prática, operava com embeddings zerados. Também foram atualizadas dependências e configurações de build e de contêiner. As correções foram implementadas em etapas, cada uma com testes automatizados, e depois passaram por revisão com verificação adversarial de cada achado. A IA também diagnosticou e corrigiu um efeito colateral visto em produção: o erro HTTP 429 de cota do Gemini na ingestão de documentos grandes. A solução passou a gerar os embeddings em segundo plano, com controle de ritmo, espera e retomada automáticas. O detalhamento está em [`docs/SEGURANCA_AUDITORIA_2026-10.md`](docs/SEGURANCA_AUDITORIA_2026-10.md).
+
+As decisões de produto ficaram com o mantenedor: assuntos públicos, embeddings Gemini, uso do `cert.p12` apenas em desenvolvimento e geração das credenciais do Postgres pelo instalador. O ambiente da IA tinha apenas JDK 21 e não tinha Docker, por isso o build da imagem e os testes com PostgreSQL/pgvector são validados no CI. Ações operacionais em instalações existentes, como a rotação de chaves e o fechamento de portas, cabem aos administradores (ver seção 3.6).
+
+---
+
+## 11. Licença e Autoria
 
 Este projeto é software livre licenciado sob os termos da [Licença MIT](LICENSE).
 
