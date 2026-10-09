@@ -128,7 +128,8 @@ class EmbeddingReindexServiceTest {
         assertThat(status.running()).isFalse();
     }
 
-    @Test
+    @SuppressWarnings("unchecked")
+	@Test
     @DisplayName("forceAll re-embeds every chunk")
     void testForceAll() {
         when(repository.countChunks(true)).thenReturn(1L);
@@ -226,7 +227,8 @@ class EmbeddingReindexServiceTest {
         assertThat(status.waitingUntil()).isNull();
     }
 
-    @Test
+    @SuppressWarnings("unchecked")
+	@Test
     @DisplayName("The wait suggested by the provider in the 429 message is honored")
     void testQuotaRefusalHonorsSuggestedDelay() {
         service = newService(new EmbeddingService(

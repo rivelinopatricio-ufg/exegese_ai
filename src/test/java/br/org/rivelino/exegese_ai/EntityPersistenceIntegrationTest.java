@@ -19,10 +19,11 @@
  *******************************************************************************/
 package br.org.rivelino.exegese_ai;
 
-import br.org.rivelino.exegese_ai.domain.entity.*;
-import br.org.rivelino.exegese_ai.domain.enums.ModelProvider;
-import br.org.rivelino.exegese_ai.domain.enums.UserRole;
-import br.org.rivelino.exegese_ai.repository.*;
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.util.List;
+import java.util.Optional;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,10 +31,22 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
-import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import br.org.rivelino.exegese_ai.domain.entity.AiModelConfig;
+import br.org.rivelino.exegese_ai.domain.entity.ChatMessage;
+import br.org.rivelino.exegese_ai.domain.entity.ChatSession;
+import br.org.rivelino.exegese_ai.domain.entity.ExegeseChunk;
+import br.org.rivelino.exegese_ai.domain.entity.ExegeseDocument;
+import br.org.rivelino.exegese_ai.domain.entity.ExegeseSubject;
+import br.org.rivelino.exegese_ai.domain.entity.ExegeseUser;
+import br.org.rivelino.exegese_ai.domain.enums.ModelProvider;
+import br.org.rivelino.exegese_ai.domain.enums.UserRole;
+import br.org.rivelino.exegese_ai.repository.AiModelConfigRepository;
+import br.org.rivelino.exegese_ai.repository.ChatMessageRepository;
+import br.org.rivelino.exegese_ai.repository.ChatSessionRepository;
+import br.org.rivelino.exegese_ai.repository.ExegeseChunkRepository;
+import br.org.rivelino.exegese_ai.repository.ExegeseDocumentRepository;
+import br.org.rivelino.exegese_ai.repository.ExegeseSubjectRepository;
+import br.org.rivelino.exegese_ai.repository.ExegeseUserRepository;
 
 /**
  * Integration test verifying persistence, relationships and constraints of JPA entities.
@@ -50,9 +63,6 @@ class EntityPersistenceIntegrationTest {
 
     @Autowired
     private ExegeseSubjectRepository subjectRepository;
-
-    @Autowired
-    private UserSubjectPermissionRepository permissionRepository;
 
     @Autowired
     private ExegeseDocumentRepository documentRepository;

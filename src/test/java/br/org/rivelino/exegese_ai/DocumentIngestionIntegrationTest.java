@@ -19,19 +19,13 @@
  *******************************************************************************/
 package br.org.rivelino.exegese_ai;
 
-import br.org.rivelino.exegese_ai.domain.dto.RawChunk;
-import br.org.rivelino.exegese_ai.domain.entity.ExegeseChunk;
-import br.org.rivelino.exegese_ai.domain.entity.ExegeseDocument;
-import br.org.rivelino.exegese_ai.domain.entity.ExegeseSubject;
-import br.org.rivelino.exegese_ai.domain.enums.SegmentationStrategyType;
-import br.org.rivelino.exegese_ai.repository.ExegeseChunkRepository;
-import br.org.rivelino.exegese_ai.repository.ExegeseDocumentRepository;
-import br.org.rivelino.exegese_ai.repository.ExegeseSubjectRepository;
-import br.org.rivelino.exegese_ai.service.CryptoService;
-import br.org.rivelino.exegese_ai.service.DocumentIngestionService;
-import br.org.rivelino.exegese_ai.service.PdfTextExtractor;
-import br.org.rivelino.exegese_ai.service.segmentation.LegalSectionSegmentationStrategy;
-import br.org.rivelino.exegese_ai.service.segmentation.StructuredQuestionSegmentationStrategy;
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.util.List;
+import java.util.Map;
+
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
@@ -44,13 +38,18 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import br.org.rivelino.exegese_ai.domain.dto.RawChunk;
+import br.org.rivelino.exegese_ai.domain.entity.ExegeseChunk;
+import br.org.rivelino.exegese_ai.domain.entity.ExegeseDocument;
+import br.org.rivelino.exegese_ai.domain.entity.ExegeseSubject;
+import br.org.rivelino.exegese_ai.domain.enums.SegmentationStrategyType;
+import br.org.rivelino.exegese_ai.repository.ExegeseChunkRepository;
+import br.org.rivelino.exegese_ai.repository.ExegeseSubjectRepository;
+import br.org.rivelino.exegese_ai.service.CryptoService;
+import br.org.rivelino.exegese_ai.service.DocumentIngestionService;
+import br.org.rivelino.exegese_ai.service.PdfTextExtractor;
+import br.org.rivelino.exegese_ai.service.segmentation.LegalSectionSegmentationStrategy;
+import br.org.rivelino.exegese_ai.service.segmentation.StructuredQuestionSegmentationStrategy;
 
 /**
  * Integration tests validating PDF extraction, polymorphic chunking strategies, and idempotent document ingestion.
@@ -64,9 +63,6 @@ class DocumentIngestionIntegrationTest {
 
     @Autowired
     private DocumentIngestionService ingestionService;
-
-    @Autowired
-    private ExegeseDocumentRepository documentRepository;
 
     @Autowired
     private ExegeseChunkRepository chunkRepository;

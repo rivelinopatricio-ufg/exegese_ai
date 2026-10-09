@@ -19,15 +19,18 @@
  *******************************************************************************/
 package br.org.rivelino.exegese_ai;
 
-import br.org.rivelino.exegese_ai.domain.dto.SearchResultChunk;
-import br.org.rivelino.exegese_ai.domain.entity.ExegeseChunk;
-import br.org.rivelino.exegese_ai.domain.entity.ExegeseDocument;
-import br.org.rivelino.exegese_ai.domain.enums.SegmentationStrategyType;
-import br.org.rivelino.exegese_ai.repository.ExegeseChunkRepository;
-import br.org.rivelino.exegese_ai.service.AntiHallucinationGuard;
-import br.org.rivelino.exegese_ai.service.DocumentIngestionService;
-import br.org.rivelino.exegese_ai.service.EmbeddingService;
-import br.org.rivelino.exegese_ai.service.HybridSearchService;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.awaitility.Awaitility.await;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.time.Duration;
+import java.util.List;
+import java.util.UUID;
+
+import javax.sql.DataSource;
+
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
@@ -53,16 +56,14 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
-import javax.sql.DataSource;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.time.Duration;
-import java.util.List;
-import java.util.UUID;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.awaitility.Awaitility.await;
+import br.org.rivelino.exegese_ai.domain.dto.SearchResultChunk;
+import br.org.rivelino.exegese_ai.domain.entity.ExegeseDocument;
+import br.org.rivelino.exegese_ai.domain.enums.SegmentationStrategyType;
+import br.org.rivelino.exegese_ai.repository.ExegeseChunkRepository;
+import br.org.rivelino.exegese_ai.service.AntiHallucinationGuard;
+import br.org.rivelino.exegese_ai.service.DocumentIngestionService;
+import br.org.rivelino.exegese_ai.service.EmbeddingService;
+import br.org.rivelino.exegese_ai.service.HybridSearchService;
 
 /**
  * PostgreSQL + pgvector integration tests (Testcontainers, skipped when Docker is unavailable) for the Flyway
