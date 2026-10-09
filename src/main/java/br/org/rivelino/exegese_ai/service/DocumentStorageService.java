@@ -151,6 +151,19 @@ public class DocumentStorageService {
         return file;
     }
 
+    /**
+     * @param storagePath Value of {@code exegese_document.storage_path}
+     * @return true when the stored original PDF exists
+     */
+    public boolean exists(String storagePath) {
+        try {
+            resolve(storagePath);
+            return true;
+        } catch (DocumentRejectedException | IllegalArgumentException e) {
+            return false;
+        }
+    }
+
     private Path resolveInsideUploadDir(String fileName) {
         Path resolved = uploadDir.resolve(fileName).normalize();
         if (!resolved.startsWith(uploadDir) || resolved.equals(uploadDir)) {

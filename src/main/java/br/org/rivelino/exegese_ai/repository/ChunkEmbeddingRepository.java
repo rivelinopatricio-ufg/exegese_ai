@@ -27,8 +27,10 @@ import org.springframework.stereotype.Repository;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -101,6 +103,38 @@ public class ChunkEmbeddingRepository {
                 UUID.fromString(rs.getString("id")),
                 rs.getString("title"),
                 rs.getString("content")), afterId, limit);
+    }
+
+    /**
+     * Embedding progress of one document.
+     *
+     * @param embedded Chunks with a usable vector
+     * @param total All chunks of the document
+     */
+    public record EmbeddingProgress(long embedded, long total) {
+
+        public boolean complete() {
+            return embedded >= total;
+        }
+    }
+
+    /**
+     * Embedding progress of every document that has chunks (one grouped query).
+     *
+     * @return Document id to progress; empty outside PostgreSQL (no vector column)
+     */
+    public Map<UUID, EmbeddingProgress> embeddingProgressByDocument() {
+        if (!postgres) {
+            return Map.of();
+        }
+        Map<UUID, EmbeddingProgress> progress = new HashMap<>();
+        String sql = "SELECT c.document_id, count(*) AS total, count(*) FILTER (WHERE NOT " + MISSING_VECTOR
+                + ") AS embedded FROM exegese_chunk c GROUP BY c.document_id";
+        jdbcTemplate.query(sql, (ResultSet rs) -> {
+            progress.put(UUID.fromString(rs.getString("document_id")),
+                    new EmbeddingProgress(rs.getLong("embedded"), rs.getLong("total")));
+        });
+        return progress;
     }
 
     /**

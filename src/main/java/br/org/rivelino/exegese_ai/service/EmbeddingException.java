@@ -19,6 +19,8 @@
  *******************************************************************************/
 package br.org.rivelino.exegese_ai.service;
 
+import java.time.Duration;
+
 /**
  * Raised when a text embedding cannot be produced: no embedding provider is configured
  * ({@code GEMINI_API_KEY} empty), the provider call failed, or the returned vector is unusable (wrong
@@ -26,6 +28,8 @@ package br.org.rivelino.exegese_ai.service;
  * a placeholder vector.
  * <p>
  * The message is built by the application and never contains provider response bodies or key material.
+ * A provider refusal for exceeded quota (HTTP 429) is flagged by {@link #isRateLimited()}, with the wait
+ * suggested by the provider when it gives one, so that background jobs can pause instead of failing.
  *
  * @author Rivelino Patrício
  */
@@ -33,19 +37,36 @@ public class EmbeddingException extends RuntimeException {
 
 	private static final long serialVersionUID = 1L;
 
-	private final boolean notConfigured;
+    private final boolean notConfigured;
+    private final boolean rateLimited;
+    private final Duration retryAfter;
 
     public EmbeddingException(String message) {
-        this(message, null, false);
+        this(message, null, false, false, null);
     }
 
     public EmbeddingException(String message, Throwable cause) {
-        this(message, cause, false);
+        this(message, cause, false, false, null);
     }
 
-    private EmbeddingException(String message, Throwable cause, boolean notConfigured) {
+    private EmbeddingException(String message, Throwable cause, boolean notConfigured, boolean rateLimited,
+                               Duration retryAfter) {
         super(message, cause);
         this.notConfigured = notConfigured;
+        this.rateLimited = rateLimited;
+        this.retryAfter = retryAfter;
+    }
+
+    /**
+     * Creates the exception signalling that the provider refused the call because a quota was exceeded.
+     *
+     * @param message Application-built message (no provider body)
+     * @param cause Provider exception
+     * @param retryAfter Wait suggested by the provider, or null when it gave none
+     * @return A new exception flagged as "rate limited"
+     */
+    public static EmbeddingException rateLimited(String message, Throwable cause, Duration retryAfter) {
+        return new EmbeddingException(message, cause, false, true, retryAfter);
     }
 
     /**
@@ -54,7 +75,7 @@ public class EmbeddingException extends RuntimeException {
      * @return A new exception flagged as "not configured"
      */
     public static EmbeddingException notConfigured() {
-        return new EmbeddingException("Embedding provider is not configured (GEMINI_API_KEY is empty)", null, true);
+        return new EmbeddingException("Embedding provider is not configured (GEMINI_API_KEY is empty)", null, true, false, null);
     }
 
     /**
@@ -62,5 +83,19 @@ public class EmbeddingException extends RuntimeException {
      */
     public boolean isNotConfigured() {
         return notConfigured;
+    }
+
+    /**
+     * @return true when the provider refused the call because a quota was exceeded (HTTP 429)
+     */
+    public boolean isRateLimited() {
+        return rateLimited;
+    }
+
+    /**
+     * @return Wait suggested by the provider before retrying, or null when unknown
+     */
+    public Duration retryAfter() {
+        return retryAfter;
     }
 }

@@ -20,7 +20,6 @@
 package br.org.rivelino.exegese_ai.config;
 
 import br.org.rivelino.exegese_ai.service.UnconfiguredEmbeddingModel;
-import com.google.genai.errors.ClientException;
 import com.google.genai.errors.GenAiIOException;
 import com.google.genai.errors.ServerException;
 import io.micrometer.observation.ObservationRegistry;
@@ -58,8 +57,6 @@ public class EmbeddingConfiguration {
 
     private static final Logger log = LoggerFactory.getLogger(EmbeddingConfiguration.class);
 
-    private static final int HTTP_TOO_MANY_REQUESTS = 429;
-
     @Bean
     public EmbeddingModel embeddingModel(@Value("${exegese.embedding.api-key:}") String apiKey,
                                          @Value("${exegese.embedding-model:gemini-embedding-001}") String modelName,
@@ -85,8 +82,11 @@ public class EmbeddingConfiguration {
     }
 
     /**
-     * Short retry policy: transient provider failures (HTTP 5xx, 429, I/O) are retried twice with backoff;
-     * authentication or request errors fail at once so that searches are not delayed.
+     * Short retry policy: transient provider failures (HTTP 5xx, I/O) are retried twice with backoff;
+     * authentication or request errors fail at once so that searches are not delayed. Quota refusals
+     * (HTTP 429) are not retried here: a few seconds never cover a per-minute or daily quota window. Search
+     * falls back to full-text retrieval at once and the background embedding job waits and resumes itself
+     * (see {@code EmbeddingReindexService}).
      */
     private static RetryTemplate embeddingRetryTemplate() {
         return new RetryTemplate(RetryPolicy.builder()
@@ -101,8 +101,6 @@ public class EmbeddingConfiguration {
     private static boolean isTransient(Throwable error) {
         return error instanceof TransientAiException
                 || error instanceof ServerException
-                || error instanceof GenAiIOException
-                || (error instanceof ClientException clientError
-                        && clientError.code() == HTTP_TOO_MANY_REQUESTS);
+                || error instanceof GenAiIOException;
     }
 }
