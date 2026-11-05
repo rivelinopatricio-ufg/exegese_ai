@@ -7,7 +7,7 @@
 # /config/nginx/site-confs/default.conf, and SWAG's nginx.conf already sets "server_tokens off".
 # This file only pins the upstream image so the "exegese-ai-proxy" image used by compose still builds.
 # ==============================================================================
-FROM linuxserver/swag:5.8.0
+FROM linuxserver/swag:5.9.0
 
 LABEL maintainer="Rivelino Patrício <rivelinopatricio@gmail.com>"
 LABEL description="Hardened NGINX Reverse Proxy with Integrated Let's Encrypt for Exegese AI"
