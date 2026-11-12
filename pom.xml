@@ -19,7 +19,7 @@
     <maven.compiler.release>21</maven.compiler.release>
     <spring-ai.version>2.0.1</spring-ai.version>
     <pdfbox.version>3.0.8</pdfbox.version>
-    <bucket4j.version>8.21.0</bucket4j.version>
+    <bucket4j.version>8.22.0</bucket4j.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
 
